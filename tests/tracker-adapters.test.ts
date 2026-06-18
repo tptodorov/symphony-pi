@@ -104,8 +104,9 @@ test("Jira adapter builds default JQL, paginates, and uses Basic auth", async ()
 		const body = JSON.parse(String(init?.body));
 		requests.push({ url: String(url), body, authorization: new Headers(init?.headers).get("authorization") });
 		return jsonResponse({
-			issues: [jiraNode(body.startAt === 0 ? "ABC-1" : "ABC-2")],
-			total: body.startAt === 0 ? 2 : 2,
+			issues: [jiraNode(body.nextPageToken ? "ABC-2" : "ABC-1")],
+			nextPageToken: body.nextPageToken ? undefined : "next-page",
+			isLast: Boolean(body.nextPageToken),
 		});
 	});
 
@@ -113,9 +114,9 @@ test("Jira adapter builds default JQL, paginates, and uses Basic auth", async ()
 	const issues = await client.fetchCandidateIssues();
 
 	assert.deepEqual(issues.map((issue) => issue.identifier), ["ABC-1", "ABC-2"]);
-	assert.equal(requests[0]!.url, "https://example.atlassian.net/rest/api/3/search");
+	assert.equal(requests[0]!.url, "https://example.atlassian.net/rest/api/3/search/jql");
 	assert.equal(requests[0]!.body.jql, 'project = ABC AND status in ("To Do", "In Progress") ORDER BY priority ASC, created ASC');
-	assert.equal(requests[1]!.body.startAt, 1);
+	assert.equal(requests[1]!.body.nextPageToken, "next-page");
 	assert.equal(requests[0]!.authorization, `Basic ${Buffer.from("dev@example.com:jira-token").toString("base64")}`);
 });
 

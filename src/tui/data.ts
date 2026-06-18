@@ -8,6 +8,8 @@ import { createTrackerAdapter } from "../tracker.js";
 import type { Issue, Logger, SymphonyConfig } from "../types.js";
 import { evaluateIssueEligibility, sortIssuesForDispatch } from "../eligibility.js";
 
+const QUEUE_CACHE_TTL_MS = 5_000;
+
 export interface SymphonyArgs {
 	workflowPath?: string;
 	port?: number;
@@ -157,7 +159,7 @@ export class SymphonyConsoleDataProvider {
 	}
 
 	async queueSnapshot(force = false): Promise<QueueSnapshot> {
-		if (!force && this.cachedQueue) return this.cachedQueue;
+		if (!force && this.cachedQueue && isFreshQueueSnapshot(this.cachedQueue)) return this.cachedQueue;
 		const daemon = this.runtime.daemon;
 		if (daemon) {
 			this.cachedQueue = await daemon.queueSnapshot();
@@ -170,9 +172,9 @@ export class SymphonyConsoleDataProvider {
 			const issues = sortIssuesForDispatch(await tracker.fetchCandidateIssues());
 			const runtime = { running: [], runningIds: new Set<string>(), claimedIds: new Set<string>(), completedIds: new Set<string>(), retryingIds: new Set<string>() };
 			const rows = issues.map((issue) => ({ issue, eligibility: evaluateIssueEligibility(issue, runtime, cfg.config!) }));
-			this.cachedQueue = { eligible: rows.filter((row) => row.eligibility.eligible), notDispatchable: rows.filter((row) => !row.eligibility.eligible), retrying: [], fetched_at: new Date().toISOString(), error: null };
+			this.cachedQueue = { eligible: rows.filter((row) => row.eligibility.eligible), notDispatchable: rows.filter((row) => !row.eligibility.eligible), recentlyChanged: [], retrying: [], fetched_at: new Date().toISOString(), error: null };
 		} catch (error) {
-			this.cachedQueue = { eligible: [], notDispatchable: [], retrying: [], fetched_at: new Date().toISOString(), error: errorMessage(error) };
+			this.cachedQueue = { eligible: [], notDispatchable: [], recentlyChanged: [], retrying: [], fetched_at: new Date().toISOString(), error: errorMessage(error) };
 		}
 		return this.cachedQueue;
 	}
@@ -347,6 +349,11 @@ function timestampSort(value: string | null): number {
 	if (!value) return Number.MAX_SAFE_INTEGER;
 	const parsed = Date.parse(value);
 	return Number.isFinite(parsed) ? parsed : Number.MAX_SAFE_INTEGER;
+}
+
+function isFreshQueueSnapshot(queue: QueueSnapshot): boolean {
+	const fetchedAt = Date.parse(queue.fetched_at);
+	return Number.isFinite(fetchedAt) && Date.now() - fetchedAt < QUEUE_CACHE_TTL_MS;
 }
 
 function normalizeError(error: unknown): { code: string; message: string } {

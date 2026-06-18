@@ -125,6 +125,46 @@ test("orchestrator retry scheduling covers continuation, exponential cap, slot e
 	assert.equal(priv(orchestrator).state.retry_attempts.has("gone-1"), false);
 });
 
+test("orchestrator queue snapshots retain recently changed issues and reload after worker exit", async () => {
+	const orchestrator = configuredOrchestrator();
+	const active = issue("jira-1", "ABC-1", { state: "In Progress" });
+	const review = issue("jira-1", "ABC-1", { state: "Review", updated_at: "2026-01-01T00:05:00.000Z" });
+	let candidates = [active];
+	let candidateFetches = 0;
+	const refreshedIds: string[][] = [];
+	priv(orchestrator).tracker = {
+		fetchCandidateIssues: async () => {
+			candidateFetches++;
+			return candidates;
+		},
+		fetchIssueStatesByIds: async (ids: string[]) => {
+			refreshedIds.push(ids);
+			return ids.includes("jira-1") ? [review] : [];
+		},
+		fetchIssuesByStates: async () => [],
+	};
+
+	let snapshot = await orchestrator.queueSnapshot();
+	assert.equal(snapshot.eligible[0]?.issue.state, "In Progress");
+
+	candidates = [];
+	snapshot = await orchestrator.queueSnapshot();
+	assert.equal(snapshot.recentlyChanged[0]?.issue.identifier, "ABC-1");
+	assert.equal(snapshot.recentlyChanged[0]?.issue.state, "Review");
+	assert.equal(snapshot.recentlyChanged[0]?.eligibility.reasons.some((reason) => reason.code === "inactive_state"), true);
+
+	const entry = runningEntry(active);
+	priv(orchestrator).state.running.set("jira-1", entry);
+	await priv(orchestrator).onWorkerExit("jira-1", "normal");
+	const retry = priv(orchestrator).state.retry_attempts.get("jira-1");
+	if (retry) clearTimeout(retry.timer_handle);
+
+	assert.equal(candidateFetches >= 3, true);
+	assert.equal(refreshedIds.some((ids) => ids.includes("jira-1")), true);
+	snapshot = await orchestrator.queueSnapshot();
+	assert.equal(snapshot.recentlyChanged[0]?.issue.state, "Review");
+});
+
 test("orchestrator reconciliation updates active, stops non-active, cleans terminal, and keeps workers on refresh failure", async () => {
 	const cwd = await mkdtemp(join(tmpdir(), "pi-symphony-reconcile-"));
 	const cfg = baseConfig();
@@ -442,6 +482,9 @@ function runningEntry(entryIssue: Issue, overrides: Partial<RunningEntry> = {}):
 		last_reported_total_tokens: 0,
 		turn_count: 0,
 		recent_events: [],
+		recent_agent_messages: [],
+		current_agent_message: null,
+		current_agent_message_at: null,
 		...overrides,
 	};
 }

@@ -180,23 +180,22 @@ export class JiraTrackerClient implements TrackerAdapter {
 
 	private async searchJql(jql: string, signal?: AbortSignal): Promise<Issue[]> {
 		const all: Issue[] = [];
-		let startAt = 0;
+		let nextPageToken: string | undefined;
 		const maxResults = this.getConfig().tracker.jiraPageSize ?? 50;
+		const fields = ["summary", "description", "priority", "status", "labels", "created", "updated", "issuelinks"];
 		for (;;) {
-			const body = await this.requestJson("/rest/api/3/search", {
+			const payload: Record<string, unknown> = { jql, maxResults, fields };
+			if (nextPageToken) payload.nextPageToken = nextPageToken;
+			const body = await this.requestJson("/rest/api/3/search/jql", {
 				method: "POST",
-				body: JSON.stringify({
-					jql,
-					startAt,
-					maxResults,
-					fields: ["summary", "description", "priority", "status", "labels", "created", "updated", "issuelinks"],
-				}),
+				body: JSON.stringify(payload),
 				signal,
 			});
 			if (!Array.isArray(body.issues)) throw new Error("jira_unknown_payload: issues missing");
 			all.push(...(body.issues.map(normalizeJiraIssue).filter(Boolean) as Issue[]));
-			startAt += body.issues.length;
-			if (startAt >= Number(body.total ?? 0) || body.issues.length === 0) break;
+			const token = typeof body.nextPageToken === "string" && body.nextPageToken.length > 0 ? body.nextPageToken : undefined;
+			if (body.issues.length === 0 || body.isLast === true || !token) break;
+			nextPageToken = token;
 		}
 		return all;
 	}

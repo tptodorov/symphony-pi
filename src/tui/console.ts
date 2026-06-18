@@ -9,6 +9,7 @@ import { SymphonyConsoleDataProvider, type ConfigSnapshot, type RunArtifactSumma
 
 const TABS = ["Overview", "Queue", "Running", "Issue", "Logs", "Runs", "Config", "Help"] as const;
 const WIDE_SPLIT_MIN_WIDTH = 140;
+const QUEUE_AUTO_REFRESH_MS = 5_000;
 type Tab = (typeof TABS)[number];
 type FilterTab = "Queue" | "Running" | "Runs";
 type LogMode = "global" | "selected";
@@ -26,6 +27,7 @@ type ConsoleAction = {
 type Selection = { issue?: Issue; run?: RunArtifactSummary; identifier?: string; previousTab?: Tab };
 
 type ConfirmState = { message: string; onYes: () => Promise<void> | void; requiredInput?: string; input?: string };
+type AgentMessageRow = { at: string; text: string; streaming: boolean };
 
 type ActionMenuState = { actions: ConsoleAction[]; cursor: number };
 type CommandPaletteState = { actions: ConsoleAction[]; query: string; cursor: number };
@@ -62,6 +64,8 @@ export class SymphonyConsole implements Component {
 	private rawConfig = false;
 	private rawResult = false;
 	private queueSimulation = false;
+	private queueRefreshInFlight = false;
+	private lastQueueRefreshAt = 0;
 	private interval: ReturnType<typeof setInterval> | null = null;
 	private version = 0;
 
@@ -94,7 +98,7 @@ export class SymphonyConsole implements Component {
 		if (data === "?") return this.setTab("Help");
 		if (data === "a" || data === "A") return this.openActions();
 		if (data === ":") return this.openCommandPalette();
-		if (data === "r") return void this.refreshCurrent(false);
+		if (data === "r") return void this.refreshCurrent(true);
 		if (data === "R") return void this.refreshAll(true);
 		if (data === "d") return void this.startDaemon();
 		if (data === "s") return void this.stopDaemonMaybeConfirm();
@@ -162,6 +166,7 @@ export class SymphonyConsole implements Component {
 
 	private async tick(): Promise<void> {
 		if (this.activeTab === "Overview" || this.activeTab === "Running") this.requestRender();
+		if (this.activeTab === "Queue" && Date.now() - this.lastQueueRefreshAt >= QUEUE_AUTO_REFRESH_MS) await this.refreshQueue(true);
 		if (this.activeTab === "Logs" && this.logFollow) await this.refreshLogs();
 	}
 
@@ -169,6 +174,7 @@ export class SymphonyConsole implements Component {
 		await this.withBusy(async () => {
 			this.config = await this.data.configSnapshot(force);
 			this.queue = await this.data.queueSnapshot(force);
+			this.lastQueueRefreshAt = Date.now();
 			this.runs = await this.data.recentRuns();
 			await this.refreshLogs();
 			const mismatch = this.data.workflowMismatch();
@@ -179,12 +185,24 @@ export class SymphonyConsole implements Component {
 
 	private async refreshCurrent(force: boolean): Promise<void> {
 		await this.withBusy(async () => {
-			if (this.activeTab === "Queue") this.queue = await this.data.queueSnapshot(force);
+			if (this.activeTab === "Queue") await this.refreshQueue(force);
 			else if (this.activeTab === "Runs") this.runs = await this.data.recentRuns();
 			else if (this.activeTab === "Logs") await this.refreshLogs();
 			else if (this.activeTab === "Config") this.config = await this.data.configSnapshot(true);
 			else this.requestRender();
 		});
+	}
+
+	private async refreshQueue(force = false): Promise<void> {
+		if (this.queueRefreshInFlight) return;
+		this.queueRefreshInFlight = true;
+		try {
+			this.queue = await this.data.queueSnapshot(force);
+			this.lastQueueRefreshAt = Date.now();
+		} finally {
+			this.queueRefreshInFlight = false;
+			this.requestRender();
+		}
 	}
 
 	private async refreshLogs(): Promise<void> {
@@ -442,12 +460,14 @@ export class SymphonyConsole implements Component {
 		const rows = this.filteredQueueRows();
 		const selected = this.currentQueueIssue();
 		const out = [this.style.title("Queue"), `Fetched: ${this.queue?.fetched_at ?? "-"}${this.queue?.error ? ` · ${this.style.error(this.queue.error)}` : ""}`];
-		if ((this.queue?.eligible.length ?? 0) + (this.queue?.notDispatchable.length ?? 0) === 0 && !this.queue?.error) out.push(this.style.dim("No active tracker candidates. Check tracker states in Config, then press R to reload."));
-		if (this.queue?.error) out.push(...wrap(`Queue unavailable: ${this.queue.error}. Open Config (7), fix tracker/config, then press R.`, width));
+		if ((this.queue?.eligible.length ?? 0) + (this.queue?.notDispatchable.length ?? 0) === 0 && !this.queue?.error) out.push(this.style.dim("No active tracker candidates. Recently changed tickets below may have left active states; press r to reload now."));
+		if (this.queue?.error) out.push(...wrap(`Queue unavailable: ${this.queue.error}. Open Config (7), fix tracker/config, then press r.`, width));
 		out.push(this.style.success("Ready to dispatch"));
 		out.push(...this.renderQueueSection(rows.ready, width >= WIDE_SPLIT_MIN_WIDTH ? Math.floor(width * 0.52) : width, rows.offsets.ready));
 		out.push(this.style.warning("Not dispatchable now"));
 		out.push(...this.renderQueueSection(rows.notReady, width >= WIDE_SPLIT_MIN_WIDTH ? Math.floor(width * 0.52) : width, rows.offsets.notReady));
+		out.push(this.style.accent("Recently changed / left active queue"));
+		out.push(...this.renderQueueSection(rows.changed, width >= WIDE_SPLIT_MIN_WIDTH ? Math.floor(width * 0.52) : width, rows.offsets.changed));
 		out.push(this.style.accent("Retry / backoff"));
 		const retryRows = this.queue?.retrying ?? [];
 		if (retryRows.length === 0) out.push(this.style.dim("  No retry/backoff items."));
@@ -519,12 +539,13 @@ export class SymphonyConsole implements Component {
 		const listWidth = width >= WIDE_SPLIT_MIN_WIDTH ? Math.floor(width * 0.54) : width;
 		const out = [this.style.title("Running"), `${rows.length} live worker(s)`];
 		if (rows.length === 0) return [...out, this.style.dim("No running agents. Press d to start daemon scheduling, or X to run one eligible issue once.")];
-		out.push(this.style.dim(listWidth < 80 ? "ID           ACTIVITY      STATE        AGE       EVENT" : "ID           ACTIVITY      STATE        PID       AGE       TURN  TOKENS  EVENT"));
+		out.push(this.style.dim(listWidth < 80 ? "ID           ACTIVITY      STATE        AGE       MESSAGE" : "ID           ACTIVITY      STATE        PID       AGE       TURN  TOKENS  MESSAGE"));
 		rows.forEach((row, i) => {
 			const prefix = i === this.cursors.Running ? this.style.selected("▸") : " ";
 			const activity = this.workerActivityBadge(row);
-			if (listWidth < 80) out.push(`${prefix} ${padRight(stringValue(row.issue_identifier), 12)} ${padRight(activity, 13)} ${padRight(stringValue(row.state), 12)} ${padRight(formatAge(stringValue(row.started_at)), 9)} ${fit(stringValue(row.last_event), Math.max(8, listWidth - 52))}`);
-			else out.push(`${prefix} ${padRight(stringValue(row.issue_identifier), 12)} ${padRight(activity, 13)} ${padRight(stringValue(row.state), 12)} ${padRight(stringValue(row.pid) || "-", 9)} ${padRight(formatAge(stringValue(row.started_at)), 9)} ${padRight(formatInt(row.turn_count), 5)} ${padRight(formatInt(objectValue(row.tokens)?.total_tokens), 7)} ${fit(stringValue(row.last_event), Math.max(8, listWidth - 86))}`);
+			const message = runningMessagePreview(row);
+			if (listWidth < 80) out.push(`${prefix} ${padRight(stringValue(row.issue_identifier), 12)} ${padRight(activity, 13)} ${padRight(stringValue(row.state), 12)} ${padRight(formatAge(stringValue(row.started_at)), 9)} ${fit(message, Math.max(8, listWidth - 52))}`);
+			else out.push(`${prefix} ${padRight(stringValue(row.issue_identifier), 12)} ${padRight(activity, 13)} ${padRight(stringValue(row.state), 12)} ${padRight(stringValue(row.pid) || "-", 9)} ${padRight(formatAge(stringValue(row.started_at)), 9)} ${padRight(formatInt(row.turn_count), 5)} ${padRight(formatInt(objectValue(row.tokens)?.total_tokens), 7)} ${fit(message, Math.max(8, listWidth - 86))}`);
 		});
 		if (selected && width >= WIDE_SPLIT_MIN_WIDTH) return this.renderSplitPane(width, "Running list", out, `Detail ${stringValue(selected.issue_identifier)}`, this.renderRunningDetail(selected, Math.floor(width * 0.4)));
 		if (selected) out.push("", ...this.renderRunningDetail(selected, width));
@@ -533,16 +554,19 @@ export class SymphonyConsole implements Component {
 
 	private renderRunningDetail(row: Record<string, unknown>, width: number): string[] {
 		const tokens = objectValue(row.tokens) ?? {};
-		const recent = Array.isArray(row.recent_events) ? (row.recent_events as Record<string, unknown>[]).slice(-6) : [];
+		const messages = agentMessagesFromRow(row).slice(-4);
 		const out = [this.style.title(`Worker ${stringValue(row.issue_identifier) || "selected"}`)];
 		out.push(`State: ${stringValue(row.state) || "-"} · pid=${stringValue(row.pid) || "-"} · session=${stringValue(row.session_id) || "-"}`);
-		out.push(`Started: ${stringValue(row.started_at) || "-"} · last event age=${formatAge(stringValue(row.last_event_at))}`);
+		out.push(`Started: ${stringValue(row.started_at) || "-"} · last update age=${formatAge(stringValue(row.last_event_at))}`);
 		out.push(`Turns: ${formatInt(row.turn_count)} · tokens=${formatInt(tokens.total_tokens)} · terminal=${stringValue(row.terminal_reason) || "-"}`);
 		out.push(`Artifact: ${stringValue(row.artifact_path) || "n/a"}`);
-		if (recent.length > 0) {
-			out.push(this.style.title("Recent events"));
-			for (const event of recent) out.push(...wrap(`• ${stringValue(event.at) || "-"} ${stringValue(event.event) || "event"} ${stringValue(event.message)}`, width));
-		} else if (row.last_event) out.push(...wrap(`Last event: ${stringValue(row.last_event)}`, width));
+		if (messages.length > 0) {
+			out.push(this.style.title("Agent messages"));
+			messages.forEach((message, index) => {
+				if (index > 0) out.push("");
+				out.push(...plainMessageLines(message.text, width));
+			});
+		} else out.push(this.style.dim("No agent text yet. Open Logs for raw runtime events."));
 		out.push(this.style.dim("Enter opens Issue detail · p opens artifact/workspace path · Logs tab shows daemon log."));
 		return out;
 	}
@@ -967,12 +991,13 @@ export class SymphonyConsole implements Component {
 		}
 	}
 
-	private filteredQueueRows(): { ready: QueueIssueSnapshot[]; notReady: QueueIssueSnapshot[]; all: QueueIssueSnapshot[]; offsets: { ready: number; notReady: number } } {
+	private filteredQueueRows(): { ready: QueueIssueSnapshot[]; notReady: QueueIssueSnapshot[]; changed: QueueIssueSnapshot[]; all: QueueIssueSnapshot[]; offsets: { ready: number; notReady: number; changed: number } } {
 		const q = this.filters.Queue.toLowerCase();
 		const matches = (row: QueueIssueSnapshot) => !q || `${row.issue.identifier} ${row.issue.title} ${row.issue.state} ${row.eligibility.reasons.map((r) => r.message).join(" ")}`.toLowerCase().includes(q);
 		const ready = (this.queue?.eligible ?? []).filter(matches);
 		const notReady = (this.queue?.notDispatchable ?? []).filter(matches);
-		return { ready, notReady, all: [...ready, ...notReady], offsets: { ready: 0, notReady: ready.length } };
+		const changed = (this.queue?.recentlyChanged ?? []).filter(matches);
+		return { ready, notReady, changed, all: [...ready, ...notReady, ...changed], offsets: { ready: 0, notReady: ready.length, changed: ready.length + notReady.length } };
 	}
 
 	private filteredCommandPaletteActions(): ConsoleAction[] {
@@ -1089,6 +1114,7 @@ export class SymphonyConsole implements Component {
 		if (this.isFilterTab(this.activeTab)) this.previousListTab = this.activeTab;
 		this.activeTab = tab;
 		if (tone && text) this.banner = { tone, text };
+		if (tab === "Queue") void this.refreshCurrent(true);
 		if (tab === "Logs") void this.refreshLogs();
 		if (tab === "Runs") void this.refreshCurrent(false);
 		if (tab === "Config") void this.refreshCurrent(false);
@@ -1165,6 +1191,50 @@ export class SymphonyConsole implements Component {
 	private footerLine(width: number): string {
 		return fit("r refresh · R all · a actions · : palette · ? help · q close · d start · s stop · x once · / filter", width);
 	}
+}
+
+function runningMessagePreview(row: Record<string, unknown>): string {
+	const messages = agentMessagesFromRow(row);
+	const latest = messages[messages.length - 1];
+	return oneLine(latest?.text || stringValue(row.last_message) || "-");
+}
+
+function agentMessagesFromRow(row: Record<string, unknown>): AgentMessageRow[] {
+	if (Array.isArray(row.recent_agent_messages)) {
+		return row.recent_agent_messages
+			.map((message) => objectValue(message))
+			.filter((message): message is Record<string, unknown> => Boolean(message))
+			.map((message) => ({ at: stringValue(message.at), text: stringValue(message.text), streaming: Boolean(message.streaming) }))
+			.filter((message) => message.text.trim().length > 0);
+	}
+
+	const events = Array.isArray(row.recent_events) ? (row.recent_events as Record<string, unknown>[]) : [];
+	const messages: AgentMessageRow[] = [];
+	let current = "";
+	let at = "";
+	for (const event of events) {
+		const name = stringValue(event.event);
+		if (name === "item_agentMessage_delta") {
+			if (!current) at = stringValue(event.at);
+			current += stringValue(event.message);
+		} else if (current) {
+			messages.push({ at, text: current, streaming: false });
+			current = "";
+			at = "";
+		}
+	}
+	if (current) messages.push({ at, text: current, streaming: true });
+	return messages;
+}
+
+function plainMessageLines(text: string, width: number): string[] {
+	const trimmed = text.trimEnd();
+	if (!trimmed) return ["-"];
+	return trimmed.split(/\r?\n/).flatMap((line) => wrap(line || " ", Math.max(20, width - 2)));
+}
+
+function oneLine(text: string): string {
+	return text.replace(/\s+/g, " ").trim() || "-";
 }
 
 export function workerActivityState(row: Record<string, unknown>, stallTimeoutMs: number, now = Date.now()): "active" | "stale" | "quiet" {

@@ -173,7 +173,7 @@ test("Codex client rejects unsupported server requests without stalling the turn
 
 async function assertScenarioRejects(scenario: string, pattern: RegExp): Promise<void> {
 	const { workspace, command } = await setupFake(scenario);
-	const client = new CodexAppServerClient(config(workspace, command, { readTimeoutMs: 80, turnTimeoutMs: 120 }), createConsoleLogger("test"));
+	const client = new CodexAppServerClient(config(workspace, command, { readTimeoutMs: 500, turnTimeoutMs: 750 }), createConsoleLogger("test"));
 	await assert.rejects(
 		() => client.runWorker({ workspacePath: workspace, issue: issue(), prompt: "Do work", continuationPrompts: [], onEvent: () => {} }),
 		pattern,

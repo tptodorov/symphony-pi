@@ -44,7 +44,7 @@ test("SymphonyConsole renders shell, help, and Config diagnostics", async () => 
 		getRuntime: () => ({
 			daemon: daemonActive
 				? ({
-						queueSnapshot: async () => ({ eligible: [], notDispatchable: [], retrying: [], fetched_at: "now", error: null }),
+						queueSnapshot: async () => ({ eligible: [], notDispatchable: [], recentlyChanged: [], retrying: [], fetched_at: "now", error: null }),
 						getWorkflowPath: () => join(dir, "OTHER.md"),
 						getHttpAddress: () => ({ enabled: false, port: null }),
 						snapshot: () => ({ counts: { running: 1 }, running: [{ issue_identifier: "ABC-1" }], max_concurrent_agents: 1 }),
@@ -209,6 +209,7 @@ test("SymphonyConsole Queue explains why selected issues are or are not running"
 	const queue: QueueSnapshot = {
 		eligible: [{ issue: ready, eligibility: { eligible: true, reasons: [{ code: "ready", message: "Ready to dispatch." }] } }],
 		notDispatchable: [{ issue: blocked, eligibility: { eligible: false, reasons: [{ code: "blocked", message: "Blocked by ABC-0." }, { code: "no_global_slots", message: "No global agent slots available (1/1)." }] } }],
+		recentlyChanged: [{ issue: fakeIssue("review-1", "ABC-REV", "Review", "In review"), eligibility: { eligible: false, reasons: [{ code: "inactive_state", message: "State Review is not in active_states." }] } }],
 		retrying: [{ issue_identifier: "ABC-R", attempt: 2, due_at: "soon", error: "boom" }],
 		fetched_at: "now",
 		error: null,
@@ -221,7 +222,7 @@ test("SymphonyConsole Queue explains why selected issues are or are not running"
 					refreshIssueDetails: async (issue: Issue) => ({ ...issue, title: "Fresh tracker title", state: "In Progress", description: "Fresh tracker description" }),
 					getWorkflowPath: () => "",
 					getHttpAddress: () => ({ enabled: false, port: null }),
-					snapshot: () => ({ counts: { running: 1 }, running: [{ issue_identifier: "ABC-RUN", state: "Doing", pid: 123, started_at: "2026-05-03T19:00:00Z", last_event_at: "2026-05-03T19:01:00Z", last_event: "turn_completed", turn_count: 2, tokens: { total_tokens: 99 }, artifact_path: "/tmp/artifact", recent_events: [{ at: "2026-05-03T19:01:00Z", event: "turn_completed", message: "ok" }] }], max_concurrent_agents: 1 }),
+					snapshot: () => ({ counts: { running: 1 }, running: [{ issue_identifier: "ABC-RUN", state: "Doing", pid: 123, started_at: "2026-05-03T19:00:00Z", last_event_at: "2026-05-03T19:01:00Z", last_event: "agent_message", turn_count: 2, tokens: { total_tokens: 99 }, artifact_path: "/tmp/artifact", recent_events: [{ at: "2026-05-03T19:01:00Z", event: "turn_completed", message: "ok" }], recent_agent_messages: [{ at: "2026-05-03T19:00:30Z", text: "Working on ABC-RUN", streaming: true }] }], max_concurrent_agents: 1 }),
 				} as any,
 			daemonStartedAt: Date.now(),
 			onceRun: null,
@@ -256,6 +257,7 @@ test("SymphonyConsole Queue explains why selected issues are or are not running"
 		assert.match(rendered, /\[blocked\]/);
 		assert.match(rendered, /Resolve the listed blocker/);
 		assert.match(rendered, /\[no-global-slots\]/);
+		assert.match(rendered, /ABC-REV\s+Review/);
 		assert.match(rendered, /ABC-R.*\[retry\]/);
 		assert.match(console.render(55).join("\n"), /ABC-B\s+Todo\s+\[blocked\]/);
 		console.handleInput("\r");
@@ -279,7 +281,8 @@ test("SymphonyConsole Queue explains why selected issues are or are not running"
 		assert.match(rendered, /Wide split layout/);
 		assert.match(rendered, /Running list/);
 		assert.match(rendered, /Detail ABC-RUN/);
-		assert.match(rendered, /Recent events/);
+		assert.match(rendered, /Agent messages/);
+		assert.match(rendered, /Working on ABC-RUN/);
 		assert.doesNotMatch(console.render(70).join("\n"), /Wide split layout/);
 	} finally {
 		console.dispose();
@@ -293,7 +296,7 @@ test("SymphonyConsole stop confirmation distinguishes idle, single, and multi-wo
 		cwd: process.cwd(),
 		getRuntime: () => ({
 			daemon: {
-				queueSnapshot: async () => ({ eligible: [], notDispatchable: [], retrying: [], fetched_at: "now", error: null }),
+				queueSnapshot: async () => ({ eligible: [], notDispatchable: [], recentlyChanged: [], retrying: [], fetched_at: "now", error: null }),
 				getWorkflowPath: () => "",
 				getHttpAddress: () => ({ enabled: false, port: null }),
 				snapshot: () => ({ counts: { running: runningRows.length }, running: runningRows, max_concurrent_agents: 2 }),

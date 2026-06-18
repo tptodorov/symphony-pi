@@ -275,9 +275,10 @@ function renderQueuePanel(queue: unknown): string {
 	if (!root) return `<div class="empty">Queue snapshot endpoint unavailable.</div>`;
 	const ready = arrayValue(root.eligible);
 	const blocked = arrayValue(root.notDispatchable);
+	const changed = arrayValue(root.recentlyChanged);
 	const retrying = arrayValue(root.retrying);
-	const rows = [...ready.map((row) => queueRow(row, "ready")), ...blocked.map((row) => queueRow(row, "not-dispatchable")), ...retrying.map((row) => retryQueueRow(row))].join("\n");
-	return `${renderMetricCard("Ready", String(ready.length), "dispatchable candidates", ready.length > 0 ? "ok" : "")}${renderMetricCard("Blocked", String(blocked.length), "not dispatchable now", blocked.length > 0 ? "warn" : "")}${rows || `<div class="empty">No queue rows in snapshot.</div>`}`;
+	const rows = [...ready.map((row) => queueRow(row, "ready")), ...blocked.map((row) => queueRow(row, "not-dispatchable")), ...changed.map((row) => queueRow(row, "changed")), ...retrying.map((row) => retryQueueRow(row))].join("\n");
+	return `${renderMetricCard("Ready", String(ready.length), "dispatchable candidates", ready.length > 0 ? "ok" : "")}${renderMetricCard("Blocked", String(blocked.length), "not dispatchable now", blocked.length > 0 ? "warn" : "")}${renderMetricCard("Changed", String(changed.length), "recently left active queue", changed.length > 0 ? "warn" : "")}${rows || `<div class="empty">No queue rows in snapshot.</div>`}`;
 }
 
 function queueRow(row: Record<string, unknown>, status: string): string {
@@ -429,7 +430,7 @@ function parseJson(text: string): Record<string, unknown> {
 function queueTotal(queue: unknown): number | null {
 	const root = objectValue(queue);
 	if (!root) return null;
-	return arrayValue(root.eligible).length + arrayValue(root.notDispatchable).length + arrayValue(root.retrying).length;
+	return arrayValue(root.eligible).length + arrayValue(root.notDispatchable).length + arrayValue(root.recentlyChanged).length + arrayValue(root.retrying).length;
 }
 
 function objectValue(value: unknown): Record<string, unknown> | null {

@@ -13,6 +13,10 @@ import { WorkspaceManager } from "./workspace.js";
 
 const CONTINUATION_PROMPT = "Continue working on the same issue. Re-check the tracker state and move the issue toward the workflow-defined handoff state. Do not repeat context already present in this thread.";
 const RECENT_EVENT_LIMIT = 50;
+const RECENT_AGENT_MESSAGE_LIMIT = 6;
+const MAX_AGENT_MESSAGE_CHARS = 6_000;
+const OBSERVED_QUEUE_TTL_MS = 24 * 60 * 60 * 1000;
+const OBSERVED_QUEUE_LIMIT = 100;
 
 export interface SymphonyOrchestratorOptions {
 	portOverride?: number;
@@ -32,9 +36,16 @@ export interface QueueIssueSnapshot {
 export interface QueueSnapshot {
 	eligible: QueueIssueSnapshot[];
 	notDispatchable: QueueIssueSnapshot[];
+	recentlyChanged: QueueIssueSnapshot[];
 	retrying: unknown[];
 	fetched_at: string;
 	error: string | null;
+}
+
+interface ObservedQueueIssue {
+	issue: Issue;
+	last_seen_at_ms: number;
+	reason: "candidate" | "dispatched" | "worker_exit" | "observed_refresh";
 }
 
 export class SymphonyOrchestrator {
@@ -51,6 +62,7 @@ export class SymphonyOrchestrator {
 	private reloadError: string | null = null;
 	private lastReloadAt: string | null = null;
 	private httpServer: SymphonyHttpServer | null = null;
+	private observedQueueIssues = new Map<string, ObservedQueueIssue>();
 
 	constructor(
 		private readonly cwd: string,
@@ -135,23 +147,32 @@ export class SymphonyOrchestrator {
 
 	async refreshIssueDetails(issue: Issue): Promise<Issue | null> {
 		const [fresh] = await this.tracker.fetchIssueStatesByIds([issue.id]);
+		if (fresh) this.observeQueueIssue(fresh, "observed_refresh");
 		return fresh ?? null;
 	}
 
 	async queueSnapshot(): Promise<QueueSnapshot> {
 		try {
 			const issues = sortIssuesForDispatch(await this.tracker.fetchCandidateIssues());
+			const activeIds = new Set(issues.map((issue) => issue.id));
+			for (const issue of issues) this.observeQueueIssue(issue, "candidate");
+			await this.refreshObservedQueueIssues(activeIds);
 			const runtime = runtimeStateFromOrchestratorState(this.state);
 			const rows = issues.map((issue) => ({ issue, eligibility: evaluateIssueEligibility(issue, runtime, this.requireConfig()) }));
+			const recentlyChanged = [...this.observedQueueIssues.values()]
+				.filter((entry) => !activeIds.has(entry.issue.id))
+				.sort((a, b) => b.last_seen_at_ms - a.last_seen_at_ms)
+				.map((entry) => ({ issue: entry.issue, eligibility: evaluateIssueEligibility(entry.issue, runtime, this.requireConfig()) }));
 			return {
 				eligible: rows.filter((row) => row.eligibility.eligible),
 				notDispatchable: rows.filter((row) => !row.eligibility.eligible),
+				recentlyChanged,
 				retrying: this.retryRows(),
 				fetched_at: new Date().toISOString(),
 				error: null,
 			};
 		} catch (error) {
-			return { eligible: [], notDispatchable: [], retrying: this.retryRows(), fetched_at: new Date().toISOString(), error: errorMessage(error) };
+			return { eligible: [], notDispatchable: [], recentlyChanged: [], retrying: this.retryRows(), fetched_at: new Date().toISOString(), error: errorMessage(error) };
 		}
 	}
 
@@ -235,6 +256,7 @@ export class SymphonyOrchestrator {
 				: null,
 			logs: running?.artifact_path ? artifactLogs(running.artifact_path) : retry?.artifact_path ? artifactLogs(retry.artifact_path) : { codex_session_logs: [] },
 			recent_events: running?.recent_events ?? [],
+			recent_agent_messages: running?.recent_agent_messages ?? [],
 			last_error: running?.last_error ?? retry?.error ?? null,
 			tracked: {},
 		};
@@ -431,7 +453,11 @@ export class SymphonyOrchestrator {
 			last_reported_total_tokens: 0,
 			turn_count: 0,
 			recent_events: [],
+			recent_agent_messages: [],
+			current_agent_message: null,
+			current_agent_message_at: null,
 		};
+		this.observeQueueIssue(issue, "dispatched");
 		this.state.claimed.add(issue.id);
 		const oldRetry = this.state.retry_attempts.get(issue.id);
 		if (oldRetry) clearTimeout(oldRetry.timer_handle);
@@ -470,7 +496,10 @@ export class SymphonyOrchestrator {
 				onEvent: (event) => this.onCodexEvent(entry.issue.id, event),
 				onAfterTurn: async () => {
 					const [fresh] = await this.tracker.fetchIssueStatesByIds([entry.issue.id], entry.abort.signal);
-					if (fresh) entry.issue = fresh;
+					if (fresh) {
+						entry.issue = fresh;
+						this.observeQueueIssue(fresh, "observed_refresh");
+					}
 					return Boolean(fresh && this.isActiveState(fresh.state));
 				},
 			});
@@ -500,6 +529,7 @@ export class SymphonyOrchestrator {
 			await this.finishRunArtifact(entry, "failed", terminalReason, error);
 			this.scheduleRetry(issueId, entry.identifier, nextAttempt(entry.retry_attempt), errorMessage(error), undefined, entry.artifact_path, terminalReason);
 		}
+		await this.reloadQueueAfterWorkerExit(entry);
 	}
 
 	private scheduleRetry(issueId: string, identifier: string, attempt: number, error: string | null, explicitDelayMs?: number, artifactPath?: string | null, terminalReason?: RunTerminalReason | null): void {
@@ -525,6 +555,7 @@ export class SymphonyOrchestrator {
 			this.scheduleRetry(issueId, retry.identifier, retry.attempt + 1, "retry poll failed");
 			return;
 		}
+		for (const candidate of candidates) this.observeQueueIssue(candidate, "candidate");
 		const issue = candidates.find((candidate) => candidate.id === issueId);
 		if (!issue) {
 			this.releaseIssue(issueId);
@@ -546,11 +577,15 @@ export class SymphonyOrchestrator {
 		entry.thread_id = event.thread_id ?? entry.thread_id;
 		entry.turn_id = event.turn_id ?? entry.turn_id;
 		entry.codex_app_server_pid = event.codex_app_server_pid ?? entry.codex_app_server_pid;
-		entry.last_codex_event = event.event;
+		const agentTextEvent = isAgentTextEvent(event);
+		entry.last_codex_event = agentTextEvent ? "agent_message" : event.event;
 		entry.last_codex_timestamp = event.timestamp;
 		entry.last_codex_message = event.message ?? null;
-		entry.recent_events.push({ at: event.timestamp, event: event.event, message: event.message ?? null });
-		if (entry.recent_events.length > RECENT_EVENT_LIMIT) entry.recent_events.splice(0, entry.recent_events.length - RECENT_EVENT_LIMIT);
+		this.recordAgentMessage(entry, event);
+		if (!agentTextEvent) {
+			entry.recent_events.push({ at: event.timestamp, event: event.event, message: event.message ?? null });
+			if (entry.recent_events.length > RECENT_EVENT_LIMIT) entry.recent_events.splice(0, entry.recent_events.length - RECENT_EVENT_LIMIT);
+		}
 		if (event.event === "session_started") {
 			entry.turn_count += 1;
 			this.logger.info("codex session started", { issue_id: issueId, issue_identifier: entry.identifier, session_id: event.session_id ?? null, thread_id: event.thread_id ?? null, turn_id: event.turn_id ?? null });
@@ -567,6 +602,48 @@ export class SymphonyOrchestrator {
 			}
 		}
 		this.applyUsage(entry, event.usage);
+	}
+
+	private recordAgentMessage(entry: RunningEntry, event: CodexRuntimeEvent): void {
+		const payload = event.payload && typeof event.payload === "object" ? (event.payload as Record<string, any>) : null;
+		if (event.event === "item_agentMessage_delta") {
+			const delta = typeof payload?.delta === "string" ? payload.delta : event.message ?? "";
+			if (!delta) return;
+			if (entry.current_agent_message === null) {
+				entry.current_agent_message = "";
+				entry.current_agent_message_at = event.timestamp;
+			}
+			entry.current_agent_message = trimAgentMessage(entry.current_agent_message + delta);
+			this.upsertStreamingAgentMessage(entry, event.timestamp);
+			return;
+		}
+
+		const item = payload?.item && typeof payload.item === "object" ? (payload.item as Record<string, any>) : null;
+		if (event.event === "item_completed" && item?.type === "agentMessage") {
+			const text = trimAgentMessage(typeof item.text === "string" ? item.text : entry.current_agent_message ?? event.message ?? "");
+			if (text.trim()) {
+				const last = entry.recent_agent_messages[entry.recent_agent_messages.length - 1];
+				const completed = { at: event.timestamp, text, streaming: false };
+				if (last?.streaming) entry.recent_agent_messages[entry.recent_agent_messages.length - 1] = completed;
+				else entry.recent_agent_messages.push(completed);
+				trimRecentAgentMessages(entry);
+			}
+			entry.current_agent_message = null;
+			entry.current_agent_message_at = null;
+		}
+	}
+
+	private upsertStreamingAgentMessage(entry: RunningEntry, timestamp: string): void {
+		const text = trimAgentMessage(entry.current_agent_message ?? "");
+		if (!text.trim()) return;
+		const last = entry.recent_agent_messages[entry.recent_agent_messages.length - 1];
+		if (last?.streaming) {
+			last.at = timestamp;
+			last.text = text;
+		} else {
+			entry.recent_agent_messages.push({ at: entry.current_agent_message_at ?? timestamp, text, streaming: true });
+			trimRecentAgentMessages(entry);
+		}
 	}
 
 	private async prepareRunArtifacts(entry: RunningEntry, workspacePath: string, prompt: string): Promise<void> {
@@ -678,6 +755,57 @@ export class SymphonyOrchestrator {
 		this.state.running.delete(issueId);
 	}
 
+	private observeQueueIssue(issue: Issue, reason: ObservedQueueIssue["reason"]): void {
+		const existing = this.observedQueueIssues.get(issue.id);
+		const lastSeenAtMs = reason === "observed_refresh" && existing ? existing.last_seen_at_ms : Date.now();
+		this.observedQueueIssues.set(issue.id, { issue, last_seen_at_ms: lastSeenAtMs, reason });
+		this.pruneObservedQueueIssues();
+	}
+
+	private async refreshObservedQueueIssues(activeIds = new Set<string>()): Promise<void> {
+		this.pruneObservedQueueIssues();
+		const ids = [...this.observedQueueIssues.keys()].filter((id) => !activeIds.has(id)).slice(0, OBSERVED_QUEUE_LIMIT);
+		if (ids.length === 0) return;
+		try {
+			const refreshed = await this.tracker.fetchIssueStatesByIds(ids);
+			for (const issue of refreshed) this.observeQueueIssue(issue, "observed_refresh");
+		} catch (error) {
+			this.logger.warn("observed queue refresh failed; keeping cached tracker state", { error: errorMessage(error) });
+		}
+	}
+
+	private async reloadQueueAfterWorkerExit(entry: RunningEntry): Promise<void> {
+		this.observeQueueIssue(entry.issue, "worker_exit");
+		try {
+			const candidates = await this.tracker.fetchCandidateIssues();
+			for (const issue of candidates) this.observeQueueIssue(issue, "candidate");
+		} catch (error) {
+			this.logger.warn("worker-exit queue reload failed", { issue_id: entry.issue.id, issue_identifier: entry.identifier, error: errorMessage(error) });
+		}
+		try {
+			const [fresh] = await this.tracker.fetchIssueStatesByIds([entry.issue.id]);
+			if (fresh) {
+				entry.issue = fresh;
+				this.observeQueueIssue(fresh, "worker_exit");
+			}
+		} catch (error) {
+			this.logger.warn("worker-exit issue state refresh failed", { issue_id: entry.issue.id, issue_identifier: entry.identifier, error: errorMessage(error) });
+		}
+	}
+
+	private pruneObservedQueueIssues(now = Date.now()): void {
+		const protectedIds = new Set([...this.state.running.keys(), ...this.state.retry_attempts.keys()]);
+		for (const [id, entry] of this.observedQueueIssues.entries()) {
+			if (!protectedIds.has(id) && now - entry.last_seen_at_ms > OBSERVED_QUEUE_TTL_MS) this.observedQueueIssues.delete(id);
+		}
+		if (this.observedQueueIssues.size <= OBSERVED_QUEUE_LIMIT) return;
+		const pruneable = [...this.observedQueueIssues.entries()].filter(([id]) => !protectedIds.has(id)).sort((a, b) => a[1].last_seen_at_ms - b[1].last_seen_at_ms);
+		for (const [id] of pruneable) {
+			if (this.observedQueueIssues.size <= OBSERVED_QUEUE_LIMIT) break;
+			this.observedQueueIssues.delete(id);
+		}
+	}
+
 	private requireConfig(): SymphonyConfig {
 		if (!this.config) throw new Error("Symphony config not loaded");
 		return this.config;
@@ -691,6 +819,20 @@ export class SymphonyOrchestrator {
 
 function issueContext(entry: RunningEntry): { issue_id: string; issue_identifier: string } {
 	return { issue_id: entry.issue.id, issue_identifier: entry.identifier };
+}
+
+function trimRecentAgentMessages(entry: RunningEntry): void {
+	if (entry.recent_agent_messages.length > RECENT_AGENT_MESSAGE_LIMIT) entry.recent_agent_messages.splice(0, entry.recent_agent_messages.length - RECENT_AGENT_MESSAGE_LIMIT);
+}
+
+function isAgentTextEvent(event: CodexRuntimeEvent): boolean {
+	const payload = event.payload && typeof event.payload === "object" ? (event.payload as Record<string, any>) : null;
+	const item = payload?.item && typeof payload.item === "object" ? (payload.item as Record<string, any>) : null;
+	return event.event === "item_agentMessage_delta" || (event.event === "item_completed" && item?.type === "agentMessage");
+}
+
+function trimAgentMessage(text: string): string {
+	return text.length <= MAX_AGENT_MESSAGE_CHARS ? text : `…${text.slice(text.length - MAX_AGENT_MESSAGE_CHARS)}`;
 }
 
 function runningRow(entry: RunningEntry): Record<string, unknown> {
@@ -710,6 +852,7 @@ function runningRow(entry: RunningEntry): Record<string, unknown> {
 		artifacts: entry.artifact_path ? artifactPaths(entry.artifact_path) : null,
 		logs: entry.artifact_path ? artifactLogs(entry.artifact_path) : { codex_session_logs: [] },
 		recent_events: entry.recent_events,
+		recent_agent_messages: entry.recent_agent_messages,
 		tokens: {
 			input_tokens: entry.codex_input_tokens,
 			output_tokens: entry.codex_output_tokens,

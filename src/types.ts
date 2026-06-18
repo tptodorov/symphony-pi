@@ -114,6 +114,12 @@ export interface RecentRuntimeEvent {
 	message: string | null;
 }
 
+export interface RecentAgentMessage {
+	at: string;
+	text: string;
+	streaming: boolean;
+}
+
 export interface CodexRuntimeEvent {
 	event: string;
 	timestamp: string;
@@ -143,6 +149,9 @@ export interface LiveSession {
 	last_reported_total_tokens: number;
 	turn_count: number;
 	recent_events: RecentRuntimeEvent[];
+	recent_agent_messages: RecentAgentMessage[];
+	current_agent_message: string | null;
+	current_agent_message_at: string | null;
 }
 
 export type RunStatus = "succeeded" | "failed" | "cancelled";

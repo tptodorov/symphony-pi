@@ -163,6 +163,10 @@ export class CodexAppServerClient {
 
 	private async respondToServerRequest(message: any): Promise<void> {
 		const method = String(message.method ?? "");
+		if (method === "mcpServer/elicitation/request" && this.shouldAutoApproveMcpToolCall(message.params)) {
+			this.send({ id: message.id, result: { action: "accept", content: {} } });
+			return;
+		}
 		if (method === "tool/requestUserInput" || method === "item/tool/requestUserInput" || method === "mcpServer/elicitation/request") {
 			this.send({ id: message.id, error: { code: -32000, message: "turn_input_required: pi-symphony does not provide interactive user input to autonomous runs" } });
 			return;
@@ -180,6 +184,14 @@ export class CodexAppServerClient {
 			return;
 		}
 		this.send({ id: message.id, error: { code: -32601, message: `unsupported_tool_call: ${method}` } });
+	}
+
+	private shouldAutoApproveMcpToolCall(params: any): boolean {
+		const meta = params?._meta && typeof params._meta === "object" ? params._meta : null;
+		const schema = params?.requestedSchema && typeof params.requestedSchema === "object" ? params.requestedSchema : null;
+		const required = Array.isArray(schema?.required) ? schema.required : [];
+		const properties = schema?.properties && typeof schema.properties === "object" ? schema.properties : {};
+		return String(params?.serverName ?? "") === "atlassian" && meta?.codex_approval_kind === "mcp_tool_call" && required.length === 0 && Object.keys(properties).length === 0;
 	}
 
 	private async handleDynamicToolCall(params: any): Promise<{ success: boolean; contentItems: Array<{ type: "inputText"; text: string }> }> {
@@ -213,7 +225,8 @@ export class CodexAppServerClient {
 			const onNotification = (message: any) => {
 				const method = String(message.method ?? "other_message");
 				const params = message.params;
-				const event = summarizeNotification(method, params, threadId, turnId, this.proc?.pid ? String(this.proc.pid) : null);
+				const autoApprovedMcp = method === "mcpServer/elicitation/request" && this.shouldAutoApproveMcpToolCall(params);
+				const event = autoApprovedMcp ? summarizeMcpApproval(params, threadId, turnId, this.proc?.pid ? String(this.proc.pid) : null) : summarizeNotification(method, params, threadId, turnId, this.proc?.pid ? String(this.proc.pid) : null);
 				onEvent(event);
 				if (method === "turn/completed" && extractId(params?.turn) === turnId) {
 					const status = params?.turn?.status;
@@ -221,7 +234,7 @@ export class CodexAppServerClient {
 					else if (status === "interrupted") finish(new Error("turn_cancelled"));
 					else finish(new Error(`turn_failed: ${params?.turn?.error?.message ?? status ?? "unknown"}`));
 				}
-				if (method === "tool/requestUserInput" || method === "item/tool/requestUserInput" || method === "mcpServer/elicitation/request") {
+				if (method === "tool/requestUserInput" || method === "item/tool/requestUserInput" || (method === "mcpServer/elicitation/request" && !autoApprovedMcp)) {
 					finish(new Error("turn_input_required"));
 				}
 			};
@@ -291,6 +304,22 @@ function summarizeNotification(method: string, params: any, threadId: string, tu
 		message: summarizeMessage(method, params),
 		usage,
 		rate_limits: findRateLimits(params),
+		payload: params,
+	};
+}
+
+function summarizeMcpApproval(params: any, threadId: string, turnId: string, pid: string | null): CodexRuntimeEvent {
+	const timestamp = new Date().toISOString();
+	const session_id = `${threadId}-${turnId}`;
+	const title = String(params?._meta?.tool_title ?? "MCP tool");
+	return {
+		event: "approval_auto_approved",
+		timestamp,
+		codex_app_server_pid: pid,
+		thread_id: threadId,
+		turn_id: turnId,
+		session_id,
+		message: `auto-approved atlassian MCP tool: ${title}`,
 		payload: params,
 	};
 }
