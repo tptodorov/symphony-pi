@@ -5,6 +5,34 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+const helper = {
+	rpc: async (proc, stdoutLines, message) => {
+		proc.stdin.write(`${JSON.stringify(message)}\n`);
+		return await helper.waitForLine(stdoutLines, (parsed) => parsed.type === "response" && parsed.id === message.id, 10_000);
+	},
+	waitForLine: async (stdoutLines, predicate, timeoutMs) => {
+		const deadline = Date.now() + timeoutMs;
+		let cursor = 0;
+		while (Date.now() < deadline) {
+			while (cursor < stdoutLines.length) {
+				const raw = stdoutLines[cursor++];
+				try {
+					const parsed = JSON.parse(raw);
+					if (predicate(parsed)) {
+						if (parsed.success === false) throw new Error(`RPC command failed: ${parsed.error ?? raw}`);
+						return parsed;
+					}
+				} catch (error) {
+					if (error instanceof SyntaxError) continue;
+					throw error;
+				}
+			}
+			await new Promise((resolve) => setTimeout(resolve, 50));
+		}
+		throw new Error(`timed out waiting for pi RPC line. Seen stdout=${stdoutLines.join("\n").slice(-4000)}`);
+	},
+};
+
 const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const pi = process.env.PI_BIN ?? "pi";
 
@@ -70,7 +98,7 @@ Smoke prompt for {{ issue.identifier }}.
 	});
 	proc.stderr.on("data", (chunk) => stderrChunks.push(chunk));
 
-	const commands = await rpc(proc, stdoutLines, { id: "commands", type: "get_commands" });
+	const commands = await helper.rpc(proc, stdoutLines, { id: "commands", type: "get_commands" });
 	const commandNames = commands.data?.commands?.map((command) => command.name) ?? [];
 	if (!commandNames.includes("symphony")) throw new Error("missing registered command: symphony");
 	for (const removed of ["symphony:validate", "symphony:once", "symphony:daemon", "symphony:panel", "symphony:stop", "symphony:status"]) {
@@ -83,31 +111,4 @@ Smoke prompt for {{ issue.identifier }}.
 	await rm(consumer, { recursive: true, force: true });
 	await rm(sessionDir, { recursive: true, force: true });
 	await rm(agentDir, { recursive: true, force: true });
-}
-
-async function rpc(proc, stdoutLines, message) {
-	proc.stdin.write(`${JSON.stringify(message)}\n`);
-	return await waitForLine(stdoutLines, (parsed) => parsed.type === "response" && parsed.id === message.id, 10_000);
-}
-
-async function waitForLine(stdoutLines, predicate, timeoutMs) {
-	const deadline = Date.now() + timeoutMs;
-	let cursor = 0;
-	while (Date.now() < deadline) {
-		while (cursor < stdoutLines.length) {
-			const raw = stdoutLines[cursor++];
-			try {
-				const parsed = JSON.parse(raw);
-				if (predicate(parsed)) {
-					if (parsed.success === false) throw new Error(`RPC command failed: ${parsed.error ?? raw}`);
-					return parsed;
-				}
-			} catch (error) {
-				if (error instanceof SyntaxError) continue;
-				throw error;
-			}
-		}
-		await new Promise((resolve) => setTimeout(resolve, 50));
-	}
-	throw new Error(`timed out waiting for pi RPC line. Seen stdout=${stdoutLines.join("\n").slice(-4000)}`);
 }

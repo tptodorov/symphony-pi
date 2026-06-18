@@ -68,5 +68,5 @@ function run(command: string, args: string[], cwd: string): SpawnSyncReturns<str
 }
 
 function shellQuote(value: string): string {
-	return `'${value.replaceAll("'", `'\\''`)}'`;
+	return `'${value.replace(/'/g, `'\\''`)}'`;
 }

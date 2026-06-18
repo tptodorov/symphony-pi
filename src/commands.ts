@@ -54,11 +54,10 @@ async function openSymphonyConsole(ctx: SymphonyCommandContext, args: SymphonyAr
 		return;
 	}
 	consoleOpen = true;
-	const controls = createControls(ctx);
 	try {
 		await ctx.ui.custom<void>(
 			(tui, theme, _keybindings, done) =>
-				new SymphonyConsole(tui, theme, controls, args, () => {
+				new SymphonyConsole(tui, theme, createControls(ctx), args, () => {
 					consoleOpen = false;
 					done();
 				}),

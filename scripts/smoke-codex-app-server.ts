@@ -90,5 +90,5 @@ function issue(): Issue {
 }
 
 function shellQuote(value: string): string {
-	return `'${value.replaceAll("'", `'\\''`)}'`;
+	return `'${value.replace(/'/g, `'\\''`)}'`;
 }

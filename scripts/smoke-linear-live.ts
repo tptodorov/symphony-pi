@@ -7,7 +7,12 @@ import { createConsoleLogger } from "../src/logger.js";
 import { LinearTrackerClient } from "../src/tracker.js";
 import type { SymphonyConfig } from "../src/types.js";
 
-if (!isTruthy(process.env.PI_SYMPHONY_LIVE_LINEAR)) {
+const helper = {
+	csv: (value: string | undefined, fallback: string[]): string[] => value?.split(",").map((item) => item.trim()).filter(Boolean) ?? fallback,
+	isTruthy: (value: string | undefined): boolean => value === "1" || value === "true" || value === "yes",
+};
+
+if (!helper.isTruthy(process.env.PI_SYMPHONY_LIVE_LINEAR)) {
 	console.log("[skip] Linear live smoke is opt-in; set PI_SYMPHONY_LIVE_LINEAR=1 with LINEAR_API_KEY and LINEAR_PROJECT_SLUG.");
 	process.exit(0);
 }
@@ -22,8 +27,8 @@ if (!apiKey || !projectSlug) {
 const cwd = await mkdtemp(join(tmpdir(), "pi-symphony-linear-live-"));
 try {
 	await writeFile(join(cwd, "WORKFLOW.md"), "Linear live smoke\n", "utf8");
-	const activeStates = csv(process.env.LINEAR_ACTIVE_STATES, ["Todo", "In Progress"]);
-	const terminalStates = csv(process.env.LINEAR_TERMINAL_STATES, ["Done", "Closed", "Canceled", "Cancelled"]);
+	const activeStates = helper.csv(process.env.LINEAR_ACTIVE_STATES, ["Todo", "In Progress"]);
+	const terminalStates = helper.csv(process.env.LINEAR_TERMINAL_STATES, ["Done", "Closed", "Canceled", "Cancelled"]);
 	const config = baseConfig(cwd, apiKey, projectSlug, activeStates, terminalStates);
 	const tracker = new LinearTrackerClient(() => config, createConsoleLogger("linear-live-smoke"));
 
@@ -68,12 +73,4 @@ function baseConfig(cwd: string, apiKey: string, projectSlug: string, activeStat
 		codex: { command: "codex app-server", readTimeoutMs: 5_000, turnTimeoutMs: 30_000, stallTimeoutMs: 30_000 },
 		server: {},
 	};
-}
-
-function csv(value: string | undefined, fallback: string[]): string[] {
-	return value?.split(",").map((item) => item.trim()).filter(Boolean) ?? fallback;
-}
-
-function isTruthy(value: string | undefined): boolean {
-	return value === "1" || value === "true" || value === "yes";
 }
