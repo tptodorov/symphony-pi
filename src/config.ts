@@ -3,7 +3,7 @@ import { homedir, tmpdir } from "node:os";
 import { dirname, isAbsolute, resolve } from "node:path";
 import { parseDocument } from "yaml";
 
-import { SymphonyConfigError, type SymphonyConfig, type TrackerKind, type WorkflowDefinition } from "./types.js";
+import { SymphonyConfigError, type RunnerKind, type SymphonyConfig, type TrackerKind, type WorkflowDefinition } from "./types.js";
 
 export const DEFAULT_WORKFLOW_FILE = "WORKFLOW.md";
 export const DEFAULT_PROMPT = "You are working on an issue from Linear.";
@@ -90,7 +90,9 @@ export function resolveConfig(workflow: WorkflowDefinition, env: NodeJS.ProcessE
 	const workspace = objectAt(root, "workspace");
 	const hooks = objectAt(root, "hooks");
 	const agent = objectAt(root, "agent");
+	const runner = objectAt(root, "runner");
 	const codex = objectAt(root, "codex");
+	const pi = objectAt(root, "pi");
 	const server = objectAt(root, "server");
 
 	if (!hasOwn(tracker, "kind")) {
@@ -101,6 +103,12 @@ export function resolveConfig(workflow: WorkflowDefinition, env: NodeJS.ProcessE
 		throw new SymphonyConfigError("unsupported_tracker_kind", `Unsupported tracker.kind: ${trackerKindRaw}`);
 	}
 	const trackerKind = trackerKindRaw as TrackerKind;
+
+	const runnerKindRaw = stringAt(runner, "kind", "codex");
+	if (!["codex", "pi"].includes(runnerKindRaw)) {
+		throw new SymphonyConfigError("unsupported_runner_kind", `Unsupported runner.kind: ${runnerKindRaw}`);
+	}
+	const runnerKind = runnerKindRaw as RunnerKind;
 
 	const apiKeyValue = stringAt(tracker, "api_key", trackerKind === "linear" ? "$LINEAR_API_KEY" : "");
 	const apiKey = resolveDollar(apiKeyValue, env);
@@ -133,8 +141,13 @@ export function resolveConfig(workflow: WorkflowDefinition, env: NodeJS.ProcessE
 	const turnTimeoutMs = positiveIntegerAt(codex, "turn_timeout_ms", 3_600_000, "codex.turn_timeout_ms");
 	const readTimeoutMs = positiveIntegerAt(codex, "read_timeout_ms", 5_000, "codex.read_timeout_ms");
 	const stallTimeoutMs = integerConfigAt(codex, "stall_timeout_ms", 300_000, "codex.stall_timeout_ms");
+	const piTurnTimeoutMs = positiveIntegerAt(pi, "turn_timeout_ms", 3_600_000, "pi.turn_timeout_ms");
+	const piReadTimeoutMs = positiveIntegerAt(pi, "read_timeout_ms", 5_000, "pi.read_timeout_ms");
+	const piStallTimeoutMs = integerConfigAt(pi, "stall_timeout_ms", 300_000, "pi.stall_timeout_ms");
+	const piServerPort = optionalPortAt(pi, "server_port", "pi.server_port");
 	const serverPort = optionalPortAt(server, "port", "server.port");
 	const codexCommand = stringAt(codex, "command", "codex app-server");
+	const piCommand = stringAt(pi, "command", "npx --yes --package pi-app-server@2.0.0 pi-server");
 
 	return {
 		workflowPath: workflow.path,
@@ -169,6 +182,7 @@ export function resolveConfig(workflow: WorkflowDefinition, env: NodeJS.ProcessE
 			maxRetryBackoffMs,
 			maxConcurrentAgentsByState: maxConcurrentByState,
 		},
+		runner: { kind: runnerKind },
 		codex: {
 			command: codexCommand,
 			approvalPolicy: codex.approval_policy,
@@ -177,6 +191,16 @@ export function resolveConfig(workflow: WorkflowDefinition, env: NodeJS.ProcessE
 			turnTimeoutMs,
 			readTimeoutMs,
 			stallTimeoutMs,
+		},
+		pi: {
+			command: piCommand,
+			modelProvider: nullableStringAt(pi, "model_provider"),
+			modelId: nullableStringAt(pi, "model_id"),
+			thinkingLevel: nullableStringAt(pi, "thinking_level"),
+			serverPort: piServerPort,
+			turnTimeoutMs: piTurnTimeoutMs,
+			readTimeoutMs: piReadTimeoutMs,
+			stallTimeoutMs: piStallTimeoutMs,
 		},
 		server: { port: serverPort },
 	};
@@ -194,7 +218,8 @@ export function validateDispatchConfig(config: SymphonyConfig): void {
 	} else if (config.tracker.kind !== "beads") {
 		throw new SymphonyConfigError("unsupported_tracker_kind", `Unsupported tracker.kind: ${config.tracker.kind}`);
 	}
-	if (!config.codex.command.trim()) throw new SymphonyConfigError("missing_codex_command", "codex.command must be present and non-empty");
+	if (config.runner.kind === "codex" && !config.codex.command.trim()) throw new SymphonyConfigError("missing_codex_command", "codex.command must be present and non-empty");
+	if (config.runner.kind === "pi" && !config.pi.command.trim()) throw new SymphonyConfigError("missing_pi_command", "pi.command must be present and non-empty");
 }
 
 export async function assertExplicitWorkflowExists(cwd: string, explicitWorkflowPath?: string): Promise<void> {

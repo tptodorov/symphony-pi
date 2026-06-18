@@ -16,6 +16,8 @@ if (spawnSync(bd, ["--version"], { encoding: "utf8" }).error) {
 
 const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const fakeCodex = join(projectRoot, "scripts", "fake-codex-app-server.cjs");
+const fakePi = join(projectRoot, "scripts", "fake-pi-app-server.cjs");
+const runnerKind = process.env.PI_SYMPHONY_E2E_RUNNER === "pi" ? "pi" : "codex";
 const cwd = await mkdtemp(join(tmpdir(), "pi-symphony-beads-e2e-"));
 const oldCwd = process.cwd();
 try {
@@ -38,8 +40,14 @@ workspace:
   root: ./workspaces
 agent:
   max_turns: 1
+runner:
+  kind: ${runnerKind}
 codex:
   command: node ${shellQuote(fakeCodex)}
+  read_timeout_ms: 1000
+  turn_timeout_ms: 1000
+pi:
+  command: node ${shellQuote(fakePi)}
   read_timeout_ms: 1000
   turn_timeout_ms: 1000
 ---
@@ -55,7 +63,7 @@ Handle {{ issue.identifier }}: {{ issue.title }}.
 	if (!existsSync(workspace)) throw new Error(`expected workspace to be created: ${workspace}`);
 	const workflow = await readFile(join(cwd, "WORKFLOW.md"), "utf8");
 	if (!workflow.includes("kind: beads")) throw new Error("temporary workflow did not use Beads tracker");
-	console.log(`[ok] Beads E2E smoke fetched ${issueId}, ran fake Codex, and created ${workspace}`);
+	console.log(`[ok] Beads E2E smoke fetched ${issueId}, ran fake ${runnerKind} runner, and created ${workspace}`);
 } finally {
 	process.chdir(oldCwd);
 	await rm(cwd, { recursive: true, force: true });

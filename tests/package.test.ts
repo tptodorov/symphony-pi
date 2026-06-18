@@ -31,6 +31,7 @@ test("package metadata exposes pi extension, files, bin, and runtime dependencie
 	assert.equal(packageJson.scripts["smoke:codex-schema"], "node scripts/check-codex-schema.mjs");
 	assert.equal(packageJson.scripts["smoke:codex-app-server"], "node --import tsx scripts/smoke-codex-app-server.ts");
 	assert.equal(packageJson.scripts["smoke:beads-e2e"], "node --import tsx scripts/smoke-beads-e2e.ts");
+	assert.equal(packageJson.scripts["smoke:beads-e2e:pi"], "PI_SYMPHONY_E2E_RUNNER=pi node --import tsx scripts/smoke-beads-e2e.ts");
 	assert.equal(packageJson.scripts["smoke:linear-live"], "node --import tsx scripts/smoke-linear-live.ts");
 	assert.equal(packageJson.scripts["smoke:jira-live"], "node --import tsx scripts/smoke-jira-live.ts");
 	assert.equal(packageJson.scripts.prepublishOnly, "npm run check && npm test && npm run smoke:pi-extension");

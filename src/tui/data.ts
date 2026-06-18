@@ -229,8 +229,11 @@ export class SymphonyConsoleDataProvider {
 						terminal_states: config.config.tracker.terminalStates,
 						max_concurrent_agents: config.config.agent.maxConcurrentAgents,
 						max_concurrent_agents_by_state: config.config.agent.maxConcurrentAgentsByState,
+						runner_kind: config.config.runner.kind,
 						codex_turn_timeout_ms: config.config.codex.turnTimeoutMs,
 						codex_stall_timeout_ms: config.config.codex.stallTimeoutMs,
+						pi_turn_timeout_ms: config.config.pi.turnTimeoutMs,
+						pi_stall_timeout_ms: config.config.pi.stallTimeoutMs,
 					}
 				: null,
 			metadata: parseJsonObject(metadata),
