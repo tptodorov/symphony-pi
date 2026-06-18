@@ -129,7 +129,9 @@ async function setup(options: { hooks?: Partial<SymphonyConfig["hooks"]>; logger
 			...options.hooks,
 		},
 		agent: { maxConcurrentAgents: 1, maxTurns: 1, maxRetryBackoffMs: 300_000, maxConcurrentAgentsByState: {} },
+		runner: { kind: "codex" },
 		codex: { command: "codex app-server", readTimeoutMs: 5_000, turnTimeoutMs: 3_600_000, stallTimeoutMs: 300_000 },
+		pi: { command: "npx --yes --package pi-app-server@2.0.0 pi-server", modelProvider: null, modelId: null, thinkingLevel: null, readTimeoutMs: 5_000, turnTimeoutMs: 3_600_000, stallTimeoutMs: 300_000 },
 		server: {},
 	};
 	return { root, logger, manager: new WorkspaceManager(() => config, logger) };

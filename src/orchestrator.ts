@@ -6,6 +6,7 @@ import { loadResolvedConfig, normalizeState, validateDispatchConfig } from "./co
 import { CodexAppServerClient } from "./codex.js";
 import { evaluateIssueEligibility, runtimeStateFromOrchestratorState, sortIssuesForDispatch, type EligibilityResult } from "./eligibility.js";
 import { SymphonyHttpServer } from "./http.js";
+import { PiAppServerClient } from "./pi-app-server.js";
 import { renderPromptTemplate } from "./template.js";
 import { createTrackerAdapter, type TrackerAdapter } from "./tracker.js";
 import type { CodexRuntimeEvent, Issue, Logger, OrchestratorState, RunningEntry, RunStatus, RunTerminalReason, SymphonyConfig, WorkflowDefinition } from "./types.js";
@@ -399,7 +400,8 @@ export class SymphonyOrchestrator {
 	}
 
 	private reconcileStalledRuns(): void {
-		const stallTimeout = this.requireConfig().codex.stallTimeoutMs;
+		const config = this.requireConfig();
+		const stallTimeout = config.runner.kind === "pi" ? config.pi.stallTimeoutMs : config.codex.stallTimeoutMs;
 		if (stallTimeout <= 0) return;
 		const now = Date.now();
 		for (const [id, entry] of this.state.running.entries()) {
@@ -486,7 +488,7 @@ export class SymphonyOrchestrator {
 			await this.workspace.runBeforeRun(workspace.path, entry.abort.signal, context);
 			const continuationCount = Math.max(config.agent.maxTurns - 1, 0);
 			const continuationPrompts = Array.from({ length: continuationCount }, () => CONTINUATION_PROMPT);
-			const client = new CodexAppServerClient(config, this.logger);
+			const client = config.runner.kind === "pi" ? new PiAppServerClient(config, this.logger) : new CodexAppServerClient(config, this.logger);
 			await client.runWorker({
 				workspacePath: workspace.path,
 				issue: entry.issue,
@@ -663,6 +665,7 @@ export class SymphonyOrchestrator {
 					started_at: entry.started_at,
 					workspace_path: workspacePath,
 					workflow_path: this.requireConfig().workflowPath,
+					runner_kind: this.requireConfig().runner.kind,
 				},
 				secrets,
 			),

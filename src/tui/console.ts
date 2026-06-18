@@ -684,8 +684,10 @@ export class SymphonyConsole implements Component {
 		if (config) {
 			out.push(`Tracker: ${config.tracker.kind} project=${config.tracker.projectSlug || config.tracker.jiraProjectKey || "n/a"} active=[${config.tracker.activeStates.join(", ")}]`);
 			out.push(`Agent: max=${config.agent.maxConcurrentAgents} by_state=${JSON.stringify(config.agent.maxConcurrentAgentsByState)}`);
+			out.push(`Runner: ${config.runner.kind}`);
 			out.push(`Workspace: ${config.workspace.root}`);
-			out.push(`Codex: ${config.codex.command} turn_timeout=${config.codex.turnTimeoutMs}`);
+			if (config.runner.kind === "pi") out.push(`Pi: ${config.pi.command} turn_timeout=${config.pi.turnTimeoutMs} model=${config.pi.modelProvider && config.pi.modelId ? `${config.pi.modelProvider}/${config.pi.modelId}` : "default"}`);
+			else out.push(`Codex: ${config.codex.command} turn_timeout=${config.codex.turnTimeoutMs}`);
 			out.push(`Server: ${config.server.port ?? "disabled"}`);
 			out.push(`Hooks: after_create=${config.hooks.afterCreate ? "set" : "-"} before_run=${config.hooks.beforeRun ? "set" : "-"} after_run=${config.hooks.afterRun ? "set" : "-"}`);
 			if (this.rawConfig) out.push(...wrap(JSON.stringify(redactConfig(config), null, 2), width));
@@ -1272,6 +1274,8 @@ export function configFixDetails(code: string): { hint: string; fieldPath: strin
 			return { fieldPath: "tracker.kind", snippet: "tracker:\n  kind: beads", hint: "Add tracker.kind: linear, jira, or beads to WORKFLOW.md front matter." };
 		case "unsupported_tracker_kind":
 			return { fieldPath: "tracker.kind", snippet: "tracker:\n  kind: linear", hint: "Use one of the supported tracker kinds: linear, jira, beads." };
+		case "unsupported_runner_kind":
+			return { fieldPath: "runner.kind", snippet: "runner:\n  kind: codex", hint: "Use one of the supported runner kinds: codex or pi." };
 		case "missing_tracker_api_key":
 			return { fieldPath: "tracker.api_key", snippet: "tracker:\n  kind: linear\n  api_key: $LINEAR_API_KEY", hint: "Set the Linear API key in WORKFLOW.md or workflow .env, then press R." };
 		case "missing_tracker_project_slug":
@@ -1284,6 +1288,8 @@ export function configFixDetails(code: string): { hint: string; fieldPath: strin
 			return { fieldPath: "tracker.project_key", snippet: "tracker:\n  project_key: ABC", hint: "Set tracker.project_key or tracker.jql for Jira Cloud." };
 		case "missing_codex_command":
 			return { fieldPath: "codex.command", snippet: "codex:\n  command: codex app-server", hint: "Set codex.command to the Codex CLI command available in this environment." };
+		case "missing_pi_command":
+			return { fieldPath: "pi.command", snippet: "runner:\n  kind: pi\npi:\n  command: npx --yes --package pi-app-server@2.0.0 pi-server", hint: "Set pi.command to a pi-app-server-compatible command available in this environment." };
 		default:
 			return { fieldPath: null, snippet: null, hint: "Review the displayed error, WORKFLOW.md front matter, and workflow .env values." };
 	}

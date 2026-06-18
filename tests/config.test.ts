@@ -112,6 +112,25 @@ test("resolved config supports Beads extension when explicitly selected", async 
 	assert.equal(config.tracker.kind, "beads");
 	assert.equal(config.tracker.beadsReadyCommand, "bd ready --json");
 	assert.deepEqual(config.tracker.activeStates, ["open", "in_progress"]);
+	assert.equal(config.runner.kind, "codex");
+});
+
+test("resolved config supports Pi runner without adding package dependencies", async () => {
+	const cwd = await mkdtemp(join(tmpdir(), "pi-symphony-"));
+	await writeFile(
+		join(cwd, "WORKFLOW.md"),
+		`---\ntracker:\n  kind: beads\nrunner:\n  kind: pi\npi:\n  command: pi-server\n  model_provider: openai\n  model_id: gpt-test\n  thinking_level: high\n---\nTask`,
+	);
+
+	const { config } = await loadResolvedConfig(cwd);
+	validateDispatchConfig(config);
+
+	assert.equal(config.runner.kind, "pi");
+	assert.equal(config.pi.command, "pi-server");
+	assert.equal(config.pi.modelProvider, "openai");
+	assert.equal(config.pi.modelId, "gpt-test");
+	assert.equal(config.pi.thinkingLevel, "high");
+	assert.equal(config.codex.command, "codex app-server");
 });
 
 test("prompt rendering is strict for unknown variables", async () => {

@@ -26,6 +26,7 @@ export interface WorkflowDefinition {
 }
 
 export type TrackerKind = "linear" | "jira" | "beads";
+export type RunnerKind = "codex" | "pi";
 
 export interface SymphonyConfig {
 	workflowPath: string;
@@ -60,11 +61,22 @@ export interface SymphonyConfig {
 		maxRetryBackoffMs: number;
 		maxConcurrentAgentsByState: Record<string, number>;
 	};
+	runner: { kind: RunnerKind };
 	codex: {
 		command: string;
 		approvalPolicy?: unknown;
 		threadSandbox?: unknown;
 		turnSandboxPolicy?: unknown;
+		turnTimeoutMs: number;
+		readTimeoutMs: number;
+		stallTimeoutMs: number;
+	};
+	pi: {
+		command: string;
+		modelProvider: string | null;
+		modelId: string | null;
+		thinkingLevel: string | null;
+		serverPort?: number;
 		turnTimeoutMs: number;
 		readTimeoutMs: number;
 		stallTimeoutMs: number;
@@ -84,6 +96,8 @@ export type ConfigErrorCode =
 	| "missing_jira_api_token"
 	| "missing_jira_project_key"
 	| "missing_codex_command"
+	| "missing_pi_command"
+	| "unsupported_runner_kind"
 	| "invalid_config";
 
 export class SymphonyConfigError extends Error {

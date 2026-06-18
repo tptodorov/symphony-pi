@@ -30,6 +30,7 @@
     "smoke": "npm run smoke:pi-extension && npm run smoke:codex-schema && npm run smoke:codex-app-server && npm run smoke:beads-e2e",
     "smoke:codex-app-server": "node --import tsx scripts/smoke-codex-app-server.ts",
     "smoke:beads-e2e": "node --import tsx scripts/smoke-beads-e2e.ts",
+    "smoke:beads-e2e:pi": "PI_SYMPHONY_E2E_RUNNER=pi node --import tsx scripts/smoke-beads-e2e.ts",
     "smoke:linear-live": "node --import tsx scripts/smoke-linear-live.ts",
     "smoke:jira-live": "node --import tsx scripts/smoke-jira-live.ts",
     "smoke:live": "npm run smoke:linear-live && npm run smoke:jira-live",
