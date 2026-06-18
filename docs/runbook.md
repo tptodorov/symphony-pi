@@ -64,6 +64,10 @@ npm run smoke:beads-e2e
 
 This initializes a temporary Beads project with `bd init --non-interactive`, creates one safe task, writes a Beads-backed `WORKFLOW.md`, runs the CLI `--once` path with a fake Codex app-server, and verifies workspace creation. If `bd` is unavailable, the script prints `[skip]` and exits successfully.
 
+Beads + Pi workflow smoke:
+
+Use the repository `WORKFLOW.md` with `tracker.kind: beads` and `runner.kind: pi` when testing the full local workflow. Before starting Symphony, confirm the safe task appears in `bd ready --json`. The `hooks.after_create` hook should create a git worktree under `.symphony/workspaces/`, make `bd context --json` work from that workspace, and reuse the operator checkout's `node_modules` when available. From the created workspace, make a small reviewable change, run `npm run check` and `npm test`, commit the change on the Symphony branch, then push/open a PR or record the exact auth or permission blocker in Beads.
+
 ## 3. Run one issue
 
 Inside `/symphony`, use Queue:
