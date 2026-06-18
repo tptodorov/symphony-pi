@@ -2,7 +2,7 @@
 
 A pi extension that implements the OpenAI Symphony draft service shape: load repo-owned `WORKFLOW.md`, poll an issue tracker, create per-issue workspaces, launch autonomous agent workers in each workspace, retry/reconcile, and expose operator-visible logs/status.
 
-The default worker backend is Codex `app-server`. A Pi-native backend can also launch Pi agents through the standalone `pi-app-server`/`pi-server` protocol.
+The default worker backend is Codex `app-server`. A Pi-native backend can also launch Pi agents through Pi native RPC mode.
 
 ## Tracker support
 
@@ -121,7 +121,7 @@ No workflow path means `./WORKFLOW.md` from the current directory.
 
 `tracker.kind` is required for dispatch validation. Use `kind: linear` for the Symphony-required Linear tracker. Jira Cloud and Beads are implementation-defined extensions and must also be explicitly selected with `kind: jira` or `kind: beads`; pi-symphony no longer silently defaults a missing kind to Linear.
 
-`runner.kind` is optional and defaults to `codex`. Use `runner.kind: pi` to run workers through `pi-app-server` instead of Codex. The Pi backend does not add an npm dependency; by default it launches `npx --yes --package pi-app-server@2.0.0 pi-server`, or you can point `pi.command` at a locally installed `pi-server` command.
+`runner.kind` is optional and defaults to `codex`. Use `runner.kind: pi` to run workers through Pi native RPC mode instead of Codex. The Pi backend does not add an npm dependency; by default it launches `pi --mode rpc` in each issue workspace and communicates over JSONL stdin/stdout.
 
 
 ### Linear
@@ -208,13 +208,13 @@ workspace:
   root: .symphony/workspaces
 
 pi:
-  command: npx --yes --package pi-app-server@2.0.0 pi-server
-  # Optional. If omitted, pi-server uses the default Pi model selection.
+  command: pi --mode rpc
+  # Optional. If omitted, Pi uses the default Pi model selection.
   # model_provider: openai
   # model_id: gpt-5
   # thinking_level: high
   turn_timeout_ms: 3600000
-  read_timeout_ms: 5000
+  read_timeout_ms: 30000
   stall_timeout_ms: 300000
 ---
 Use Pi agent tools to implement task {{ issue.identifier }}: {{ issue.title }}.
@@ -254,7 +254,7 @@ Hooks are trusted shell scripts from `WORKFLOW.md` and run inside the workspace.
 
 Approval and sandbox config are passed through to the installed Codex app-server version. High-trust approval callbacks for command execution, file changes, and additional permissions are auto-approved so autonomous runs do not stall; use restrictive Codex sandbox/approval settings and external isolation for untrusted work. User-input-required signals are treated as run failures to avoid indefinite stalls.
 
-With `runner.kind: pi`, pi-symphony launches `pi-server` through stdio and creates one Pi `AgentSession` per issue workspace. Pi extension UI prompts are cancelled and treated as `user_input_required` so autonomous runs do not block waiting for an operator. Use Pi's own model/tool/extension configuration and external isolation appropriate for the target repository.
+With `runner.kind: pi`, pi-symphony launches `pi --mode rpc` in the issue workspace and communicates with Pi over its native JSONL RPC protocol. Dialog-style Pi extension UI requests are cancelled so autonomous runs do not block waiting for an operator; fire-and-forget UI notifications are logged as events. Use Pi's own model/tool/extension configuration and external isolation appropriate for the target repository.
 
 The optional Symphony `linear_graphql` dynamic tool is advertised on `thread/start` for Linear sessions with valid auth and handled for Codex `item/tool/call` requests. It reuses configured Linear credentials, rejects invalid/multi-operation inputs, and returns `success=false` for GraphQL errors while preserving response bodies. Unsupported app-server tool/server requests receive structured errors and do not stall the run. See `docs/validation-matrix.md`.
 
@@ -274,7 +274,7 @@ npm run smoke:jira-live   # opt-in via PI_SYMPHONY_LIVE_JIRA=1
 
 `smoke:codex-schema` runs `codex app-server generate-json-schema --out <tmp>` when Codex is installed and verifies the generated `thread/start` and `turn/start` schemas contain the fields pi-symphony sends. It skips with an explicit message when Codex or schema generation is unavailable.
 
-`smoke:codex-app-server` launches the installed Codex app-server and runs one harmless prompt through `CodexAppServerClient`. It skips when Codex/auth/model readiness is unavailable. `npm test` includes a fake `pi-server` protocol test for the Pi runner. `smoke:beads-e2e` initializes a temporary Beads project, creates one safe issue, runs `pi-symphony --once` with the Beads adapter and fake Codex app-server, and verifies workspace creation.
+`smoke:codex-app-server` launches the installed Codex app-server and runs one harmless prompt through `CodexAppServerClient`. It skips when Codex/auth/model readiness is unavailable. `npm test` includes fake Pi RPC protocol tests for the Pi runner. `smoke:beads-e2e` initializes a temporary Beads project, creates one safe issue, runs `pi-symphony --once` with the Beads adapter and fake Codex app-server, and verifies workspace creation. `npm run smoke:beads-e2e:pi` runs the same path through a fake Pi RPC process.
 
 `smoke:linear-live` and `smoke:jira-live` are opt-in, non-mutating live tracker checks. They require isolated test projects/JQL and credentials via environment variables; see `docs/runbook.md`.
 

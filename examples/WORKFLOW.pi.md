@@ -17,13 +17,13 @@ agent:
   max_turns: 3
 
 pi:
-  command: npx --yes --package pi-app-server@2.0.0 pi-server
-  # Optional model override. If omitted, pi-server uses Pi's default selection.
+  command: pi --mode rpc
+  # Optional model override. If omitted, Pi uses Pi's default selection.
   # model_provider: openai
   # model_id: gpt-5
   # thinking_level: high
   turn_timeout_ms: 3600000
-  read_timeout_ms: 5000
+  read_timeout_ms: 30000
   stall_timeout_ms: 300000
 ---
 You are a Pi agent worker for Beads task {{ issue.identifier }}: {{ issue.title }}.
