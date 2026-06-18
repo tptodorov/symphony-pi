@@ -26,6 +26,63 @@ test("registerSymphonyCommands registers single Symphony console command", () =>
 	assert.deepEqual(commands, ["symphony"]);
 });
 
+test("Symphony extension status includes active and configured agent counts", async () => {
+	const dir = await mkdtemp(join(tmpdir(), "pi-symphony-status-"));
+	const workflow = join(dir, "WORKFLOW.md");
+	await writeFile(
+		workflow,
+		`---
+tracker:
+  kind: beads
+  command: 'node -e "console.log([])"'
+  ready_command: 'node -e "console.log([])"'
+agent:
+  max_concurrent_agents: 3
+polling:
+  interval_ms: 60000
+---
+Task
+`,
+		"utf8",
+	);
+	let command: any;
+	let shutdown: any;
+	let symphonyConsole: any;
+	const statuses: Array<string | undefined> = [];
+	const pi = {
+		registerCommand(_name: string, definition: { handler(args: string, ctx: unknown): Promise<void> }): void {
+			command = definition;
+		},
+		on(event: string, handler: () => Promise<void>): void {
+			if (event === "session_shutdown") shutdown = handler;
+		},
+	};
+	registerSymphonyCommands(pi as never);
+	const ctx = {
+		cwd: dir,
+		hasUI: true,
+		ui: {
+			notify: () => {},
+			setStatus: (id: string, value: string | undefined) => {
+				if (id === "symphony") statuses.push(value);
+			},
+			custom: async (factory: any) => {
+				symphonyConsole = factory({ requestRender: () => {} }, fakeTheme(), {}, () => {});
+			},
+		},
+	};
+
+	try {
+		await command.handler(`--workflow ${workflow}`, ctx);
+		symphonyConsole.handleInput("d");
+		await sleep(100);
+		assert.equal(statuses.includes("♪ daemon running (0/3)"), true, statuses.join(", "));
+	} finally {
+		symphonyConsole?.dispose();
+		if (shutdown) await shutdown();
+	}
+});
+
 test("parseSymphonyArgs supports workflow and port grammar", () => {
 	assert.deepEqual(parseSymphonyArgs(""), {});
 	assert.deepEqual(parseSymphonyArgs("--port 8080 WORKFLOW.md"), { port: 8080, workflowPath: "WORKFLOW.md" });

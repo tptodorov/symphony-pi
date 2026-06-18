@@ -11,6 +11,7 @@ let daemon: SymphonyOrchestrator | null = null;
 let daemonStartedAt: number | null = null;
 let onceRun: OnceRunState | null = null;
 let consoleOpen = false;
+let statusTimer: ReturnType<typeof setInterval> | null = null;
 
 type SymphonyCommandContext = {
 	cwd: string;
@@ -45,6 +46,7 @@ export function registerSymphonyCommands(pi: ExtensionAPI): void {
 		daemonStartedAt = null;
 		onceRun = null;
 		consoleOpen = false;
+		stopStatusTicker();
 	});
 }
 
@@ -87,10 +89,12 @@ function createControls(ctx: SymphonyCommandContext): SymphonyControls {
 			try {
 				await daemon.start();
 				daemonStartedAt = Date.now();
+				startStatusTicker(ctx);
 				setSymphonyStatus(ctx, "daemon running");
 			} catch (error) {
 				daemon = null;
 				daemonStartedAt = null;
+				stopStatusTicker();
 				setSymphonyStatus(ctx, undefined);
 				throw error;
 			}
@@ -101,6 +105,7 @@ function createControls(ctx: SymphonyCommandContext): SymphonyControls {
 			await current.stop();
 			daemon = null;
 			daemonStartedAt = null;
+			stopStatusTicker();
 			setSymphonyStatus(ctx, undefined);
 		},
 		runOnce: async (selector, args) => {
@@ -122,24 +127,51 @@ function createControls(ctx: SymphonyCommandContext): SymphonyControls {
 				setSymphonyStatus(ctx, undefined);
 			}
 		},
-		openExternal,
+		openExternal: async (target) => {
+			const command = process.platform === "darwin" ? "open" : process.platform === "win32" ? "cmd" : "xdg-open";
+			const args = process.platform === "win32" ? ["/c", "start", "", target] : [target];
+			await new Promise<void>((resolve, reject) => {
+				const child = spawn(command, args, { stdio: "ignore", detached: true });
+				child.once("error", reject);
+				child.once("spawn", () => {
+					child.unref();
+					resolve();
+				});
+			});
+		},
 		setFooterStatus: (value) => setSymphonyStatus(ctx, value ? value.replace(/^♪\s*/, "") : undefined),
 	};
 }
 
-function setSymphonyStatus(ctx: SymphonyCommandContext, value: string | undefined): void {
-	ctx.ui.setStatus("symphony", value ? `♪ ${value}` : undefined);
+function startStatusTicker(ctx: SymphonyCommandContext): void {
+	stopStatusTicker();
+	statusTimer = setInterval(() => setSymphonyStatus(ctx, "daemon running"), 1_000);
+	statusTimer.unref?.();
 }
 
-async function openExternal(target: string): Promise<void> {
-	const command = process.platform === "darwin" ? "open" : process.platform === "win32" ? "cmd" : "xdg-open";
-	const args = process.platform === "win32" ? ["/c", "start", "", target] : [target];
-	await new Promise<void>((resolve, reject) => {
-		const child = spawn(command, args, { stdio: "ignore", detached: true });
-		child.once("error", reject);
-		child.once("spawn", () => {
-			child.unref();
-			resolve();
-		});
-	});
+function stopStatusTicker(): void {
+	if (statusTimer) clearInterval(statusTimer);
+	statusTimer = null;
+}
+
+function setSymphonyStatus(ctx: SymphonyCommandContext, value: string | undefined): void {
+	ctx.ui.setStatus("symphony", value ? `♪ ${formatSymphonyStatus(value)}` : undefined);
+}
+
+function formatSymphonyStatus(value: string): string {
+	if (value !== "daemon running" || !daemon) return value;
+	const snapshot = objectValue(daemon.snapshot()) ?? {};
+	const counts = objectValue(snapshot.counts) ?? {};
+	const runningRows = Array.isArray(snapshot.running) ? snapshot.running : [];
+	const active = numberValue(counts.running) ?? runningRows.length;
+	const total = numberValue(snapshot.max_concurrent_agents) ?? daemon.getConfig()?.agent.maxConcurrentAgents ?? "?";
+	return `${value} (${active}/${total})`;
+}
+
+function objectValue(value: unknown): Record<string, unknown> | null {
+	return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
+}
+
+function numberValue(value: unknown): number | null {
+	return typeof value === "number" && Number.isFinite(value) ? value : null;
 }

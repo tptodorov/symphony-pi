@@ -75,15 +75,7 @@ function parseArgs(argv: string[]): CliArgs {
 }
 
 function waitForSignal(): Promise<void> {
-	return new Promise((resolve) => {
-		const done = () => {
-			process.off("SIGINT", done);
-			process.off("SIGTERM", done);
-			resolve();
-		};
-		process.on("SIGINT", done);
-		process.on("SIGTERM", done);
-	});
+	return Promise.race([new Promise<void>((resolve) => process.once("SIGINT", () => resolve())), new Promise<void>((resolve) => process.once("SIGTERM", () => resolve()))]);
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
