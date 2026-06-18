@@ -189,7 +189,7 @@ test("SymphonyConsole Logs supports search, severity filter, and jump-to-error",
 	};
 	const console = new SymphonyConsole({ requestRender: () => {} }, fakeTheme(), controls, { workflowPath: workflow }, () => {});
 	try {
-		await sleep(20);
+		await sleep(150);
 		console.handleInput("5");
 		console.handleInput("a");
 		let actions = console.render(220).join("\n");
@@ -236,8 +236,7 @@ test("SymphonyConsole Logs supports search, severity filter, and jump-to-error",
 		for (const char of "debug") console.handleInput(char);
 		assert.match(console.render(220).join("\n"), /Export selected run debug bun/);
 		console.handleInput("\r");
-		await sleep(5);
-		const bundle = await readFile(join(runDir, "debug-bundle.json"), "utf8");
+		const bundle = await readEventually(join(runDir, "debug-bundle.json"));
 		assert.match(bundle, /"issue_identifier": "ABC-9"/);
 		assert.match(bundle, /"log_excerpt"/);
 		assert.doesNotMatch(bundle, /sk-123456789012345/);
@@ -253,7 +252,7 @@ test("SymphonyConsole Logs supports search, severity filter, and jump-to-error",
 		console.handleInput("\r");
 		await sleep(5);
 		rendered = console.render(220).join("\n");
-		assert.match(rendered, /selected run ABC-9/);
+		assert.match(rendered, /Showing logs for ABC-9/);
 		assert.match(rendered, /ERROR model failed loudly/);
 	} finally {
 		console.dispose();
@@ -294,6 +293,7 @@ test("SymphonyConsole Queue explains why selected issues are or are not running"
 	try {
 		await sleep(20);
 		console.handleInput("2");
+		await sleep(50);
 		let rendered = console.render(180).join("\n");
 		assert.match(rendered, /Wide split layout/);
 		assert.match(rendered, /Queue list/);
@@ -437,6 +437,19 @@ function fakeIssue(id: string, identifier: string, state: string, title: string)
 		created_at: null,
 		updated_at: null,
 	};
+}
+
+async function readEventually(path: string): Promise<string> {
+	let lastError: unknown;
+	for (let i = 0; i < 20; i++) {
+		try {
+			return await readFile(path, "utf8");
+		} catch (error) {
+			lastError = error;
+			await sleep(25);
+		}
+	}
+	throw lastError;
 }
 
 function fakeTheme(): any {

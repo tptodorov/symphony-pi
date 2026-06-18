@@ -5,10 +5,10 @@ Goal: add a Pi-native worker backend for Symphony without disrupting the existin
 ## Design
 
 - Keep the current Codex backend as the default (`runner.kind: codex`).
-- Add `runner.kind: pi` that talks to `pi-app-server` over stdio.
-- Do not add `pi-app-server` as an npm dependency. The Pi runner launches a configurable command, defaulting to `npx --yes --package pi-app-server@2.0.0 pi-server`, and speaks the published JSON protocol directly.
-- Start one `pi-server` process per worker attempt. Each process gets an ephemeral WebSocket port via `PI_SERVER_PORT` so concurrent workers do not collide while Symphony uses stdio only.
-- Map Pi session events into the existing Symphony runtime event/artifact shape so the TUI, dashboard, retries, and run artifacts continue to work.
+- Add `runner.kind: pi` that spawns `pi --mode rpc` in each issue workspace.
+- Communicate with Pi over its native strict JSONL RPC protocol on stdin/stdout; split only on LF and do not use Node `readline` for protocol framing.
+- Start one Pi RPC process per worker attempt so each task gets workspace-local execution and isolated lifecycle management.
+- Map Pi RPC events into the existing Symphony runtime event/artifact shape so the TUI, dashboard, retries, and run artifacts continue to work.
 
 ## Configuration
 
@@ -17,12 +17,12 @@ runner:
   kind: pi
 
 pi:
-  command: npx --yes --package pi-app-server@2.0.0 pi-server
+  command: pi --mode rpc
   model_provider: openai        # optional
   model_id: gpt-5               # optional, requires model_provider
   thinking_level: high          # optional
   turn_timeout_ms: 3600000
-  read_timeout_ms: 5000
+  read_timeout_ms: 30000
   stall_timeout_ms: 300000
 ```
 
@@ -34,14 +34,12 @@ Existing `codex:` config remains supported unchanged.
 - Same workspace/hook flow.
 - Same concurrency, retry, reconciliation, stall timeout, and run artifacts.
 - Pi-specific model and thinking-level selection.
-- Interactive extension UI requests are cancelled and treated as `user_input_required` for autonomous runs.
-
-Known difference: `pi-app-server` 2.0.0 has its own command timeout in the server process. Symphony still enforces `pi.turn_timeout_ms`, but very long prompts can also be bounded by the server's internal timeout.
+- Dialog-style extension UI requests are cancelled for autonomous runs; fire-and-forget UI notifications are logged as runtime events.
 
 ## Implementation steps
 
 1. Add `runner` and `pi` config parsing and validation.
-2. Add `PiAppServerClient` stdio protocol client with fake-server tests.
+2. Add `PiAppServerClient` native RPC client with fake RPC tests.
 3. Switch the orchestrator to select Codex or Pi runner per config.
 4. Update TUI/config summaries, README, and workflow examples.
 5. Run typecheck, unit tests, and smoke where available.

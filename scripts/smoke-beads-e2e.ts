@@ -27,6 +27,8 @@ try {
 	const issueId = issue.id;
 	if (!issueId) throw new Error(`bd create did not return an issue id: ${created.stdout}`);
 
+	const piCommand = `node ${shellQuote(fakePi)}`;
+
 	await writeFile(
 		join(cwd, "WORKFLOW.md"),
 		`---
@@ -47,7 +49,7 @@ codex:
   read_timeout_ms: 1000
   turn_timeout_ms: 1000
 pi:
-  command: node ${shellQuote(fakePi)}
+  command: ${piCommand}
   read_timeout_ms: 1000
   turn_timeout_ms: 1000
 ---

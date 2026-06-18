@@ -119,14 +119,14 @@ test("resolved config supports Pi runner without adding package dependencies", a
 	const cwd = await mkdtemp(join(tmpdir(), "pi-symphony-"));
 	await writeFile(
 		join(cwd, "WORKFLOW.md"),
-		`---\ntracker:\n  kind: beads\nrunner:\n  kind: pi\npi:\n  command: pi-server\n  model_provider: openai\n  model_id: gpt-test\n  thinking_level: high\n---\nTask`,
+		`---\ntracker:\n  kind: beads\nrunner:\n  kind: pi\npi:\n  command: pi --mode rpc\n  model_provider: openai\n  model_id: gpt-test\n  thinking_level: high\n---\nTask`,
 	);
 
 	const { config } = await loadResolvedConfig(cwd);
 	validateDispatchConfig(config);
 
 	assert.equal(config.runner.kind, "pi");
-	assert.equal(config.pi.command, "pi-server");
+	assert.equal(config.pi.command, "pi --mode rpc");
 	assert.equal(config.pi.modelProvider, "openai");
 	assert.equal(config.pi.modelId, "gpt-test");
 	assert.equal(config.pi.thinkingLevel, "high");

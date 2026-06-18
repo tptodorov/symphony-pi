@@ -1,8 +1,9 @@
-node_modules/
+node_modules
 dist/
 coverage/
 .symphony/runs/
 .symphony/workspaces/
+.symphony/logs/
 
 # Local pi/opencode runtime artifacts
 .oh-my-opencode-pi-debug/

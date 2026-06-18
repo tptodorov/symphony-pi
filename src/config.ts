@@ -142,12 +142,11 @@ export function resolveConfig(workflow: WorkflowDefinition, env: NodeJS.ProcessE
 	const readTimeoutMs = positiveIntegerAt(codex, "read_timeout_ms", 5_000, "codex.read_timeout_ms");
 	const stallTimeoutMs = integerConfigAt(codex, "stall_timeout_ms", 300_000, "codex.stall_timeout_ms");
 	const piTurnTimeoutMs = positiveIntegerAt(pi, "turn_timeout_ms", 3_600_000, "pi.turn_timeout_ms");
-	const piReadTimeoutMs = positiveIntegerAt(pi, "read_timeout_ms", 5_000, "pi.read_timeout_ms");
+	const piReadTimeoutMs = positiveIntegerAt(pi, "read_timeout_ms", 30_000, "pi.read_timeout_ms");
 	const piStallTimeoutMs = integerConfigAt(pi, "stall_timeout_ms", 300_000, "pi.stall_timeout_ms");
-	const piServerPort = optionalPortAt(pi, "server_port", "pi.server_port");
 	const serverPort = optionalPortAt(server, "port", "server.port");
 	const codexCommand = stringAt(codex, "command", "codex app-server");
-	const piCommand = stringAt(pi, "command", "npx --yes --package pi-app-server@2.0.0 pi-server");
+	const piCommand = stringAt(pi, "command", "pi --mode rpc");
 
 	return {
 		workflowPath: workflow.path,
@@ -197,7 +196,6 @@ export function resolveConfig(workflow: WorkflowDefinition, env: NodeJS.ProcessE
 			modelProvider: nullableStringAt(pi, "model_provider"),
 			modelId: nullableStringAt(pi, "model_id"),
 			thinkingLevel: nullableStringAt(pi, "thinking_level"),
-			serverPort: piServerPort,
 			turnTimeoutMs: piTurnTimeoutMs,
 			readTimeoutMs: piReadTimeoutMs,
 			stallTimeoutMs: piStallTimeoutMs,
