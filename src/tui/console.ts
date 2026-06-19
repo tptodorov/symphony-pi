@@ -1289,7 +1289,7 @@ export function configFixDetails(code: string): { hint: string; fieldPath: strin
 		case "missing_codex_command":
 			return { fieldPath: "codex.command", snippet: "codex:\n  command: codex app-server", hint: "Set codex.command to the Codex CLI command available in this environment." };
 		case "missing_pi_command":
-			return { fieldPath: "pi.command", snippet: "runner:\n  kind: pi\npi:\n  command: npx --yes --package pi-app-server@2.0.0 pi-server", hint: "Set pi.command to a pi-app-server-compatible command available in this environment." };
+			return { fieldPath: "pi.command", snippet: "runner:\n  kind: pi\npi:\n  command: pi --mode rpc", hint: "Set pi.command to a Pi RPC command available in this environment." };
 		default:
 			return { fieldPath: null, snippet: null, hint: "Review the displayed error, WORKFLOW.md front matter, and workflow .env values." };
 	}

@@ -22,7 +22,7 @@
   ],
   "scripts": {
     "check": "tsc --noEmit",
-    "test": "node --import tsx --test tests/*.test.ts",
+    "test": "node --import tsx --test --test-concurrency=1 tests/*.test.ts",
     "build": "echo 'pi loads TypeScript extensions directly; no build required'",
     "cli": "node --import tsx src/cli.ts",
     "smoke:pi-extension": "node scripts/smoke-pi-extension.mjs",

@@ -85,7 +85,7 @@ function baseConfig(
 		agent: { maxConcurrentAgents: 1, maxTurns: 1, maxRetryBackoffMs: 30_000, maxConcurrentAgentsByState: {} },
 		runner: { kind: "codex" },
 		codex: { command: "codex app-server", readTimeoutMs: 5_000, turnTimeoutMs: 30_000, stallTimeoutMs: 30_000 },
-		pi: { command: "npx --yes --package pi-app-server@2.0.0 pi-server", modelProvider: null, modelId: null, thinkingLevel: null, readTimeoutMs: 5_000, turnTimeoutMs: 30_000, stallTimeoutMs: 30_000 },
+		pi: { command: "pi --mode rpc", modelProvider: null, modelId: null, thinkingLevel: null, readTimeoutMs: 5_000, turnTimeoutMs: 30_000, stallTimeoutMs: 30_000 },
 		server: {},
 	};
 }

@@ -76,7 +76,6 @@ export interface SymphonyConfig {
 		modelProvider: string | null;
 		modelId: string | null;
 		thinkingLevel: string | null;
-		serverPort?: number;
 		turnTimeoutMs: number;
 		readTimeoutMs: number;
 		stallTimeoutMs: number;

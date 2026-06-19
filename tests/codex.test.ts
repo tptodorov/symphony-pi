@@ -217,7 +217,7 @@ function config(workspace: string, command: string, overrides: { readTimeoutMs?:
 		agent: { maxConcurrentAgents: 1, maxTurns: 1, maxRetryBackoffMs: 300_000, maxConcurrentAgentsByState: {} },
 		runner: { kind: "codex" },
 		codex: { command, readTimeoutMs: overrides.readTimeoutMs ?? 1_000, turnTimeoutMs: overrides.turnTimeoutMs ?? 1_000, stallTimeoutMs: 300_000 },
-		pi: { command: "npx --yes --package pi-app-server@2.0.0 pi-server", modelProvider: null, modelId: null, thinkingLevel: null, readTimeoutMs: 1_000, turnTimeoutMs: 1_000, stallTimeoutMs: 300_000 },
+		pi: { command: "pi --mode rpc", modelProvider: null, modelId: null, thinkingLevel: null, readTimeoutMs: 1_000, turnTimeoutMs: 1_000, stallTimeoutMs: 300_000 },
 		server: {},
 	};
 }
