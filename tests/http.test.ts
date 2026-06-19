@@ -36,6 +36,10 @@ test("HTTP server exposes state, issue lookup, refresh, and dashboard", async ()
 		last_error: "hook failed",
 		workspace: { path: "/tmp/work/ABC-1" },
 		recent_events: [{ at: "2026-01-01T00:00:00.000Z", event: "turn_completed", message: "done" }],
+		recent_agent_messages: [
+			{ at: "2026-01-01T00:00:30.000Z", text: "Investigating ABC-1\nFound <danger> & context\nAGENT_API_KEY=sk-abcdefghijkl", streaming: false },
+			{ at: "2026-01-01T00:00:45.000Z", text: "Drafting the fix now", streaming: true },
+		],
 		artifacts: { events: join(runDir, "events.jsonl"), result: join(runDir, "result.json") },
 		logs: { codex_session_logs: [{ label: "Codex events", path: join(runDir, "events.jsonl"), url: `file://${join(runDir, "events.jsonl")}` }] },
 	};
@@ -47,6 +51,19 @@ test("HTTP server exposes state, issue lookup, refresh, and dashboard", async ()
 		recent_events: [],
 		artifacts: null,
 	};
+	const fallbackIssueSnapshot = {
+		issue_identifier: "ABC-3",
+		status: "running",
+		last_error: null,
+		workspace: { path: "/tmp/work/ABC-3" },
+		recent_events: [
+			{ at: "2026-01-01T00:01:00.000Z", event: "item_agentMessage_delta", payload: { delta: "Fallback <message> " } },
+			{ at: "2026-01-01T00:01:01.000Z", event: "item_agentMessage_delta", message: "from recent events" },
+			{ at: "2026-01-01T00:01:02.000Z", event: "turn_completed", message: "done" },
+			{ timestamp: "2026-01-01T00:01:03.000Z", event: "item_agentMessage_delta", payload: { delta: "Streaming PASSWORD=letmein" } },
+		],
+		artifacts: null,
+	};
 	const queueSnapshot = {
 		eligible: [{ issue: { identifier: "ABC-Q", title: "Ready queue item" }, eligibility: { eligible: true, reasons: [{ code: "ready", message: "Ready to dispatch" }] } }],
 		notDispatchable: [{ issue: { identifier: "ABC-B", title: "Blocked queue item" }, eligibility: { eligible: false, reasons: [{ code: "blocked", message: "Blocked by ABC-0" }] } }],
@@ -55,7 +72,7 @@ test("HTTP server exposes state, issue lookup, refresh, and dashboard", async ()
 	const server = new SymphonyHttpServer({
 		port: 0,
 		snapshot: () => runtimeSnapshot,
-		issueSnapshot: (identifier) => (identifier === "ABC-1" ? issueSnapshot : identifier === "ABC-2" ? retryIssueSnapshot : null),
+		issueSnapshot: (identifier) => (identifier === "ABC-1" ? issueSnapshot : identifier === "ABC-2" ? retryIssueSnapshot : identifier === "ABC-3" ? fallbackIssueSnapshot : null),
 		queueSnapshot: async () => queueSnapshot,
 		refresh: async () => {
 			refreshed = true;
@@ -141,12 +158,26 @@ test("HTTP server exposes state, issue lookup, refresh, and dashboard", async ()
 		const issueHtml = await issuePage.text();
 		assert.match(issueHtml, /Issue telemetry/);
 		assert.match(issueHtml, /hook failed/);
+		assert.match(issueHtml, /Agent messages/);
+		assert.match(issueHtml, /Investigating ABC-1/);
+		assert.match(issueHtml, /Found &lt;danger&gt; &amp; context/);
+		assert.match(issueHtml, /AGENT_API_KEY=\[redacted\]/);
+		assert.doesNotMatch(issueHtml, /sk-abcdefghijkl/);
+		assert.match(issueHtml, /Drafting the fix now/);
+		assert.match(issueHtml, /streaming/);
 		assert.match(issueHtml, /Recent events/);
 		assert.match(issueHtml, /\/tmp\/work\/ABC-1/);
 
 		const retryPage = await fetch(`http://127.0.0.1:${port}/issue/ABC-2`);
 		assert.equal(retryPage.status, 200);
 		assert.match(await retryPage.text(), /codex timeout|turn_timeout|retrying/);
+
+		const fallbackPage = await fetch(`http://127.0.0.1:${port}/issue/ABC-3`);
+		assert.equal(fallbackPage.status, 200);
+		const fallbackHtml = await fallbackPage.text();
+		assert.match(fallbackHtml, /Fallback &lt;message&gt; from recent events/);
+		assert.match(fallbackHtml, /Streaming PASSWORD=\[redacted\]/);
+		assert.doesNotMatch(fallbackHtml, /PASSWORD=letmein/);
 
 		const missingPage = await fetch(`http://127.0.0.1:${port}/issue/MISSING`);
 		assert.equal(missingPage.status, 404);

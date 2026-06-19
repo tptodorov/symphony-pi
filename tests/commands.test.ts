@@ -191,6 +191,7 @@ test("SymphonyConsole Logs supports search, severity filter, and jump-to-error",
 	try {
 		await sleep(150);
 		console.handleInput("5");
+		await renderEventually(console, 220, /INFO boot/);
 		console.handleInput("a");
 		let actions = console.render(220).join("\n");
 		assert.match(actions, /Open current log path/);
@@ -214,7 +215,7 @@ test("SymphonyConsole Logs supports search, severity filter, and jump-to-error",
 		rendered = console.render(220).join("\n");
 		assert.match(rendered, /scrolled -1/);
 		console.handleInput("6");
-		rendered = console.render(220).join("\n");
+		rendered = await renderEventually(console, 220, /Wide split layout/);
 		assert.match(rendered, /Wide split layout/);
 		assert.match(rendered, /Runs list/);
 		assert.match(rendered, /Detail ABC-9/);
@@ -250,8 +251,7 @@ test("SymphonyConsole Logs supports search, severity filter, and jump-to-error",
 		assert.match(actions, /Export selected run debug b/);
 		for (let i = 0; i < 5; i++) console.handleInput("j");
 		console.handleInput("\r");
-		await sleep(5);
-		rendered = console.render(220).join("\n");
+		rendered = await renderEventually(console, 220, /Showing logs for ABC-9/);
 		assert.match(rendered, /Showing logs for ABC-9/);
 		assert.match(rendered, /ERROR model failed loudly/);
 	} finally {
@@ -450,6 +450,17 @@ async function readEventually(path: string): Promise<string> {
 		}
 	}
 	throw lastError;
+}
+
+async function renderEventually(console: SymphonyConsole, width: number, pattern: RegExp): Promise<string> {
+	for (let i = 0; i < 40; i++) {
+		const rendered = console.render(width).join("\n");
+		if (pattern.test(rendered)) return rendered;
+		await sleep(25);
+	}
+	const rendered = console.render(width).join("\n");
+	assert.match(rendered, pattern);
+	return rendered;
 }
 
 function fakeTheme(): any {
