@@ -21,3 +21,6 @@ coverage/
 *.db
 .beads-credential-key
 .env
+
+# Beads / Dolt files (added by bd init)
+.beads/proxieddb/
